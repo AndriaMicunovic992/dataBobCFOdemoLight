@@ -16,12 +16,15 @@ from config import COMPANY_ID, REVENUE_ACCS, COGS_ACCS, OUTPUT_DIR
 
 def build_scenario(rows: list[dict], adjustments: list[dict]) -> list[dict]:
     """
-    Apply a list of percentage adjustments to budget rows.
+    Apply a list of adjustments to budget rows.
 
     Each adjustment dict supports:
         months        — list of month numbers (1-12); omit for full year
         account_group — "revenue" | "cogs" | "all" | "112,114,..." (comma-separated IDs)
-        pct_change    — float; positive = increase, negative = decrease
+        pct_change    — float; percentage adjustment (positive = increase)
+        abs_change    — float; absolute CHF amount, distributed evenly across matching rows
+
+    Exactly one of pct_change or abs_change should be provided per adjustment.
 
     Returns a new list of row dicts with amount and budget_amount scaled.
     All other FK columns (currency_id, cost_object_id, …) are preserved as-is.
@@ -30,7 +33,6 @@ def build_scenario(rows: list[dict], adjustments: list[dict]) -> list[dict]:
 
     for adj in adjustments:
         months  = set(adj.get("months", []))
-        pct     = adj.get("pct_change", 0) / 100.0
         grp     = adj.get("account_group", "all")
 
         if grp == "revenue":
@@ -42,13 +44,27 @@ def build_scenario(rows: list[dict], adjustments: list[dict]) -> list[dict]:
         else:
             targets = {int(x.strip()) for x in str(grp).split(",") if x.strip().isdigit()}
 
-        for r in scenario:
-            if months and int(r["date"][5:7]) not in months:
-                continue
-            if targets is not None and r["account"] not in targets:
-                continue
-            r["amount"]        = round(r["amount"]        * (1 + pct), 2)
-            r["budget_amount"] = round(r["budget_amount"] * (1 + pct), 2)
+        # Identify matching rows
+        matching = [
+            r for r in scenario
+            if (not months or int(r["date"][5:7]) in months)
+            and (targets is None or r["account"] in targets)
+        ]
+
+        if "abs_change" in adj:
+            # Distribute absolute amount evenly across matching rows
+            n = len(matching)
+            if n > 0:
+                per_row = adj["abs_change"] / n
+                for r in matching:
+                    r["amount"]        = round(r["amount"]        + per_row, 2)
+                    r["budget_amount"] = round(r["budget_amount"] + per_row, 2)
+        else:
+            # Percentage change
+            pct = adj.get("pct_change", 0) / 100.0
+            for r in matching:
+                r["amount"]        = round(r["amount"]        * (1 + pct), 2)
+                r["budget_amount"] = round(r["budget_amount"] * (1 + pct), 2)
 
     return scenario
 

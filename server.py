@@ -21,6 +21,7 @@ from config import OUTPUT_DIR, CACHE_DB
 from pbi_client import PBIClient, list_pbi_instances
 from scenario import build_scenario
 from agent import Agent
+from dax import fetch_cashflow_structure
 
 app = Flask(__name__, static_folder=str(Path(__file__).parent))
 
@@ -30,6 +31,7 @@ _lock   = threading.Lock()
 _pbi    : PBIClient | None = None
 _agent  : Agent | None = None
 _status = {"connected": False, "message": "Not connected"}
+_cf_structure: list[dict] | None = None   # cached Dim Cashflow Struktur rows
 
 def _run(coro):
     """Run a coroutine on the background event loop."""
@@ -217,10 +219,11 @@ def scenario_preview():
             acc = r["account"]
             if acc not in acc_meta:
                 acc_meta[acc] = {
-                    "id":   acc,
-                    "nr":   r.get("account_nr",   str(acc)),
-                    "name": r.get("account_name", f"Account {acc}"),
-                    "grp":  r.get("account_grp",  ""),
+                    "id":          acc,
+                    "nr":          r.get("account_nr",   str(acc)),
+                    "name":        r.get("account_name", f"Account {acc}"),
+                    "grp":         r.get("account_grp",  ""),
+                    "cf_position": r.get("cf_position",  0),
                 }
 
         # Build per-account rows with per-month and total delta
@@ -268,11 +271,73 @@ def scenario_preview():
             "delta":    round(grand_scen - grand_orig, 2),
         }
 
+        # ── Cashflow impact ──────────────────────────────────────────────────────
+        # Map account-level original/scenario amounts to cashflow positions via
+        # cf_position, apply Invert flags, then compute subtotals using PathFrom/PathTo.
+        cf_result = None
+        global _cf_structure
+        try:
+            if _cf_structure is None and _pbi is not None:
+                _cf_structure = _run(fetch_cashflow_structure(_pbi))
+
+            if _cf_structure:
+                # Sum original, scenario, delta by cf_position from account rows
+                pos_orig:   dict[int, float] = {}
+                pos_scen:   dict[int, float] = {}
+                for r in result_accounts:
+                    cfp = acc_meta.get(r["id"], {}).get("cf_position", 0)
+                    if cfp:
+                        pos_orig[cfp] = pos_orig.get(cfp, 0.0) + r["total"]["original"]
+                        pos_scen[cfp] = pos_scen.get(cfp, 0.0) + r["total"]["scenario"]
+
+                # Step 1: base items (PathFrom == PathTo) — apply Invert
+                base_orig:   dict[int, float] = {}
+                base_scen:   dict[int, float] = {}
+                for cf in _cf_structure:
+                    s = cf["sort"]
+                    if cf["path_from"] == cf["path_to"]:
+                        inv = -1 if cf["invert"] == 1 else 1
+                        base_orig[s] = round(pos_orig.get(s, 0.0) * inv, 2)
+                        base_scen[s] = round(pos_scen.get(s, 0.0) * inv, 2)
+
+                # Step 2: subtotals + build result list
+                cf_rows = []
+                for cf in _cf_structure:
+                    s = cf["sort"]
+                    is_subtotal = cf["path_from"] != cf["path_to"]
+                    if is_subtotal:
+                        orig = round(sum(
+                            base_orig.get(k, 0.0) for k in base_orig
+                            if cf["path_from"] <= k <= cf["path_to"]
+                        ), 2)
+                        scen = round(sum(
+                            base_scen.get(k, 0.0) for k in base_scen
+                            if cf["path_from"] <= k <= cf["path_to"]
+                        ), 2)
+                    else:
+                        orig = base_orig.get(s, 0.0)
+                        scen = base_scen.get(s, 0.0)
+
+                    cf_rows.append({
+                        "sort":        s,
+                        "display":     cf["display"],
+                        "gruppe":      cf["gruppe"],
+                        "original":    orig,
+                        "scenario":    scen,
+                        "delta":       round(scen - orig, 2),
+                        "is_subtotal": is_subtotal,
+                    })
+
+                cf_result = cf_rows
+        except Exception as e:
+            print(f"[Preview] CF computation skipped: {e}")
+
         return jsonify({
             "ok":       True,
             "months":   months,
             "accounts": result_accounts,
             "totals":   col_totals,
+            "cashflow": cf_result,
         })
 
 

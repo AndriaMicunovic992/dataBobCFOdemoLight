@@ -23,7 +23,7 @@ pip install anthropic mcp
 
 ```bash
 # Windows
-set ANTHROPIC_API_KEY=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
+set ANTHROPIC_API_KEY=sk...
 
 # macOS / Linux
 export ANTHROPIC_API_KEY=sk-ant-...

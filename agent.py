@@ -25,8 +25,14 @@ SYSTEM_PROMPT = """You are a financial scenario specialist for the FINANCE Power
 
 == DATA MODEL ==
 Fakten Hauptbuch (GL ledger): The table where scenarios are written.
-  Budget grain: account × date × cost_object_id. This is what run_dax_query fetches.
+  run_dax_query loads TWO data sets into one unified baseline:
+    1. P&L budget (value_type_id=2) for the requested year
+    2. BS/CF actuals (value_type_id=1) from the PRIOR year, aggregated by account × month
+       — these are accounts that have no budget rows (e.g. receivables, payables, inventory,
+       fixed assets, cash). Their prior-year actuals serve as the scenario baseline.
+  All accounts appear in the same account breakdown and can be adjusted the same way.
   Each row has: account (ID + GL-Nr. + name), date, amount, budget_amount, cost_object (ID + name).
+  The account_grp (Reporting H2) tells you which reporting group an account belongs to.
 Fakten Rechnungszeile (Invoice lines): Actual sales at customer × item level.
   Budget rows here have customer_id=NULL — aggregated, not per-customer.
 Dim Kunde: Customer master. Columns: customer_id (int), Kundenname, Kundenname Alias.
@@ -79,6 +85,10 @@ Output EXACTLY this block to accumulate one adjustment group (no extra text insi
 }
 ```
 
+Each adjustment uses EITHER pct_change OR abs_change (never both):
+  Percentage: {"account_group": "revenue", "pct_change": 5.0}
+  Absolute:   {"account_group": "345", "abs_change": 50000}
+
 == APPLY FORMAT ==
 Output EXACTLY this block to trigger SQL generation for ALL staged adjustments:
 ```apply
@@ -91,6 +101,10 @@ Output EXACTLY this block to trigger SQL generation for ALL staged adjustments:
 Rules:
 - months: 1-12 list, or omit for full year.
 - account_group: "revenue", "cogs", "all", or comma-separated account IDs e.g. "112,114".
+- Use pct_change for percentage adjustments, abs_change for absolute CHF amounts.
+- IMPORTANT: When the user provides an absolute value (e.g. "add CHF 50,000 to receivables"),
+  use abs_change directly with that value. Do NOT convert it to a percentage. Do NOT
+  distribute or weight it yourself — the engine handles even distribution automatically.
 - pct_change: always the BUSINESS direction — never flip the sign because a GL account
   happens to be stored as a negative number.
 
@@ -103,8 +117,26 @@ Rules:
   DO NOT stage a negative pct_change just because the GL value is negative.
   A positive pct_change always makes costs larger in absolute terms.
 
+- abs_change: the total CHF amount to add (positive) or subtract (negative).
+  The engine distributes this evenly across all matching rows.
+  Example: abs_change=120000 on an account with 12 monthly rows → +10,000 per month.
+
 - Never output both a ```stage and ```apply block in the same message.
-- Never mention caches, files, sessions, or backends."""
+- Never mention caches, files, sessions, or backends.
+
+== CASHFLOW & BALANCE SHEET ==
+The loaded data includes BOTH P&L budget accounts AND BS/CF accounts (based on prior-
+year actuals). You can adjust any account visible in the run_dax_query results — P&L
+accounts like revenue and costs, AND balance sheet accounts like receivables, payables,
+inventory, fixed assets, cash, etc. Use their account IDs the same way.
+
+The UI automatically computes a cashflow statement impact from ALL staged adjustments:
+- Each GL account is mapped to a cashflow position via Dim Hauptkonto[Position Geldflussrechnung]
+  → Dim Cashflow Struktur[GruppeSort].
+- When the user clicks "Preview Impact", the preview shows TWO tabs:
+  1. P&L tab — account-level delta table and waterfall chart
+  2. Cashflow tab — derived cashflow statement (Operating / Investing / Financing / Net)
+- Tell the user to check the Cashflow tab in Preview Impact to see the cash effect."""
 
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
@@ -171,27 +203,54 @@ def data_summary(rows: list[dict]) -> str:
 
     rev   = sum(v for acc, v in acct_totals.items() if acc in REVENUE_ACCS)
     cogs  = sum(v for acc, v in acct_totals.items() if acc in COGS_ACCS)
-    total = sum(acct_totals.values())
     ms    = sorted(months)
 
+    # Separate P&L vs BS accounts by group
+    PL_GROUPS = {
+        "Umsatz", "Warenaufwand", "Bezugskosten", "Fakturierte Nebenerlöse",
+        "Erlösminderungen", "Personalaufwand", "Raumaufwand", "Energieaufwand",
+        "Übriger Betriebsaufwand", "Marketing", "IT Aufwand",
+        "Betriebsaufwand Logistik", "Abschreibungen", "Finanzerfolg",
+        "Betriebsfremder Erfolg", "Ausserordentlicher Erfolg", "Steueraufwand",
+    }
+    pl_accts = {a for a in acct_totals if acct_meta[a]["grp"] in PL_GROUPS}
+    bs_accts = {a for a in acct_totals if a not in pl_accts}
+
+    pl_total = sum(acct_totals[a] for a in pl_accts)
+    bs_total = sum(acct_totals[a] for a in bs_accts)
+
     lines = [
-        f"Budget loaded: {len(rows)} rows | {len(acct_totals)} accounts "
+        f"Data loaded: {len(rows)} rows | {len(acct_totals)} accounts "
         f"| {ms[0]} to {ms[-1]}",
-        f"  Revenue : CHF {rev:>15,.0f}",
-        f"  COGS    : CHF {cogs:>15,.0f}",
-        f"  Total   : CHF {total:>15,.0f}",
+        f"  P&L accounts : {len(pl_accts):>4}   (budget {ms[0][:4]})",
+        f"    Revenue    : CHF {rev:>15,.0f}",
+        f"    COGS       : CHF {cogs:>15,.0f}",
+        f"    P&L total  : CHF {pl_total:>15,.0f}",
+        f"  BS/CF accounts: {len(bs_accts):>4}   (prior-year actuals as baseline)",
+        f"    BS total   : CHF {bs_total:>15,.0f}",
         "",
         "Account breakdown:",
         f"  {'ID':>4}  {'GL-Nr.':>8}  {'Group':<26}  {'Name':<36}  {'Amount CHF':>14}",
         "  " + "─" * 96,
     ]
 
-    for acc in sorted(acct_totals.keys()):
+    # P&L accounts first, then BS
+    for acc in sorted(pl_accts):
         meta = acct_meta[acc]
         lines.append(
             f"  {acc:>4}  {meta['nr']:>8}  {meta['grp']:<26}  {meta['name']:<36}"
             f"  {acct_totals[acc]:>14,.0f}"
         )
+
+    if bs_accts:
+        lines.append("  " + "─" * 96)
+        lines.append("  BS/CF accounts (prior-year actuals):")
+        for acc in sorted(bs_accts):
+            meta = acct_meta[acc]
+            lines.append(
+                f"  {acc:>4}  {meta['nr']:>8}  {meta['grp']:<26}  {meta['name']:<36}"
+                f"  {acct_totals[acc]:>14,.0f}"
+            )
 
     # Cost-object summary: collect names from enriched rows
     co_names: dict[int, str] = {}
@@ -208,7 +267,7 @@ def data_summary(rows: list[dict]) -> str:
         if len(co_names) > 8:
             lines.append(f"    … and {len(co_names) - 8} more")
 
-    lines += ["", "Ready — tell me the adjustments to stage."]
+    lines += ["", "Ready — tell me the adjustments to stage (P&L and/or BS accounts)."]
     return "\n".join(lines)
 
 

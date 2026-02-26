@@ -844,6 +844,73 @@
     color: var(--accent-dk);
   }
 
+  /* ── Waterfall chart ── */
+  .wf-wrap {
+    flex: 1; padding: 28px 24px 16px; display: flex;
+    align-items: center; justify-content: center; overflow: hidden;
+  }
+  .wf-wrap svg {
+    width: 100%; height: 100%; max-height: 520px;
+  }
+  .wf-bar { transition: opacity 0.15s; cursor: default; }
+  .wf-bar:hover { opacity: 0.75; }
+
+  /* ── Preview tab bar (P&L / Cashflow) ── */
+  .preview-tabs {
+    display: flex; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 2px; gap: 2px; flex-shrink: 0;
+    margin-right: 8px;
+  }
+  .ptab {
+    padding: 4px 14px; border-radius: 4px; border: none;
+    background: transparent; color: var(--text2);
+    font-size: 11.5px; font-weight: 600;
+    cursor: pointer; transition: all 0.12s;
+    font-family: 'Inter', sans-serif; white-space: nowrap;
+  }
+  .ptab.active {
+    background: var(--surface); color: var(--text);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* ── Cashflow impact table ── */
+  .cf-wrap { flex: 1; overflow: auto; padding: 8px 0; }
+  .cf-tbl {
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    font-size: 12px;
+  }
+  .cf-tbl thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--bg); padding: 8px 16px;
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 2px solid var(--border2); text-align: left;
+  }
+  .cf-tbl thead th:last-child { text-align: right; }
+  .cf-tbl tbody td {
+    padding: 5px 16px; border-bottom: 1px solid var(--border);
+    color: var(--text2); vertical-align: middle;
+  }
+  .cf-tbl tbody td:last-child {
+    text-align: right; font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px; min-width: 120px;
+  }
+  .cf-tbl tr.cf-sub td {
+    background: var(--bg); font-weight: 700; color: var(--text);
+    border-top: 2px solid var(--border2);
+    border-bottom: 2px solid var(--border2);
+    padding: 7px 16px;
+  }
+  .cf-tbl tr.cf-section td {
+    padding-top: 14px; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); border-bottom: none;
+  }
+  .cf-tbl tr.cf-zero td { opacity: 0.4; }
+  .cf-tbl td.cf-pos { color: var(--green); }
+  .cf-tbl td.cf-neg { color: var(--red); }
+
   /* Toast */
   .toast {
     position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
@@ -1023,9 +1090,14 @@
         <span class="modal-title">GL Impact Preview</span>
         <div class="preview-summary" id="preview-summary">Loading…</div>
       </div>
-      <div class="view-toggle">
-        <button class="vt-btn active" id="vt-delta"   onclick="setPreviewMode('delta')">Δ Delta</button>
-        <button class="vt-btn"        id="vt-compare" onclick="setPreviewMode('compare')">⊟ Compare</button>
+      <div class="preview-tabs">
+        <button class="ptab active" id="ptab-pl" onclick="setPreviewTab('pl')">P&L</button>
+        <button class="ptab"        id="ptab-cf" onclick="setPreviewTab('cf')">Cashflow</button>
+      </div>
+      <div class="view-toggle" id="pl-view-toggle">
+        <button class="vt-btn active" id="vt-delta"     onclick="setPreviewMode('delta')">Δ Delta</button>
+        <button class="vt-btn"        id="vt-compare"   onclick="setPreviewMode('compare')">⊟ Compare</button>
+        <button class="vt-btn"        id="vt-waterfall" onclick="setPreviewMode('waterfall')">⊞ Waterfall</button>
       </div>
       <button class="m-btn" onclick="closePreview()">✕</button>
     </div>
@@ -1401,6 +1473,7 @@ async function applyScenario() {
 // ── GL Impact Preview ─────────────────────────────────────────────────────────
 let _previewData      = null;
 let _previewMode      = 'delta';
+let _previewTab       = 'pl';      // 'pl' or 'cf'
 let _collapsedGroups  = new Set();  // numeric keys of currently-collapsed group rows
 
 async function previewImpact() {
@@ -1428,37 +1501,59 @@ async function previewImpact() {
 
   _previewData     = r;
   _collapsedGroups = new Set();   // all groups expanded on fresh load
+  setPreviewTab('pl', false);
   setPreviewMode('delta', false);
   renderPreview();
 }
 
 function setPreviewMode(mode, rerender = true) {
   _previewMode = mode;
-  document.getElementById("vt-delta").classList.toggle("active",   mode === "delta");
-  document.getElementById("vt-compare").classList.toggle("active", mode === "compare");
-  if (rerender && _previewData) renderPreview();
+  document.getElementById("vt-delta").classList.toggle("active",     mode === "delta");
+  document.getElementById("vt-compare").classList.toggle("active",   mode === "compare");
+  document.getElementById("vt-waterfall").classList.toggle("active", mode === "waterfall");
+  if (rerender && _previewData) {
+    if (_previewTab === "cf") renderCashflowPreview();
+    else                      renderPreview();
+  }
 }
+
+// P&L reporting groups — everything else is BS/CF
+const PL_GROUPS = new Set([
+  "Umsatz", "Warenaufwand", "Bezugskosten", "Fakturierte Nebenerlöse",
+  "Erlösminderungen", "Personalaufwand", "Raumaufwand", "Energieaufwand",
+  "Übriger Betriebsaufwand", "Marketing", "IT Aufwand",
+  "Betriebsaufwand Logistik", "Abschreibungen", "Finanzerfolg",
+  "Betriebsfremder Erfolg", "Ausserordentlicher Erfolg", "Steueraufwand",
+]);
 
 function renderPreview() {
   const { months, accounts, totals } = _previewData;
-  const grand = totals["total"];
 
-  // ── Summary line ──────────────────────────────────────────────────────────
-  const changedAccs   = accounts.filter(a => Math.abs(a.total.delta) >= 0.5).length;
+  // Filter to P&L accounts only for this view
+  const plAccounts = accounts.filter(a => PL_GROUPS.has(a.grp));
+
+  // ── Summary line (P&L only) ───────────────────────────────────────────────
+  const changedAccs   = plAccounts.filter(a => Math.abs(a.total.delta) >= 0.5).length;
   const changedMonths = months.filter(m =>
-    accounts.some(a => Math.abs(((a.months[m]) || {}).delta || 0) >= 0.5)
+    plAccounts.some(a => Math.abs(((a.months[m]) || {}).delta || 0) >= 0.5)
   ).length;
-  const sign = grand.delta >= 0 ? "+" : "−";
-  const cls  = grand.delta >= 0 ? "pos" : "neg";
+  // Compute P&L-only grand totals
+  const plGrand = {
+    original: plAccounts.reduce((s, a) => s + a.total.original, 0),
+    scenario: plAccounts.reduce((s, a) => s + a.total.scenario, 0),
+    delta:    plAccounts.reduce((s, a) => s + a.total.delta, 0),
+  };
+  const sign = plGrand.delta >= 0 ? "+" : "−";
+  const cls  = plGrand.delta >= 0 ? "pos" : "neg";
   document.getElementById("preview-summary").innerHTML =
-    `Net impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(grand.delta))}</span>` +
-    ` &nbsp;·&nbsp; ${changedAccs} of ${accounts.length} accounts changed` +
+    `P&L impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(plGrand.delta))}</span>` +
+    ` &nbsp;·&nbsp; ${changedAccs} of ${plAccounts.length} accounts changed` +
     ` &nbsp;·&nbsp; ${changedMonths} of ${months.length} months`;
 
-  // ── Group accounts by grp (preserve first-seen order) ────────────────────
+  // ── Group P&L accounts by grp (preserve first-seen order) ─────────────────
   const groups = [];
   const grpMap = new Map();   // label → {label, key(int), accounts[]}
-  for (const acc of accounts) {
+  for (const acc of plAccounts) {
     const label = acc.grp || "Other";
     if (!grpMap.has(label)) {
       const g = { label, key: grpMap.size, accounts: [] };
@@ -1480,6 +1575,9 @@ function renderPreview() {
     const scen = grp.accounts.reduce((s, a) => s + a.total.scenario, 0);
     grp.total = { original: orig, scenario: scen, delta: scen - orig };
   }
+
+  // ── Waterfall view ──────────────────────────────────────────────────────
+  if (_previewMode === 'waterfall') { renderWaterfall(groups); return; }
 
   // ── Month column headers ─────────────────────────────────────────────────
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -1537,12 +1635,18 @@ function renderPreview() {
     }
   }
 
-  // ── Grand total row ───────────────────────────────────────────────────────
-  h += `<tr class="trow"><td class="pt-ac">Grand Total</td>`;
+  // ── Grand total row (P&L only) ──────────────────────────────────────────
+  const plMonthTotals = {};
   for (const m of months) {
-    h += ptCell(totals[m], _previewMode, "");
+    const orig = plAccounts.reduce((s, a) => s + ((a.months[m] || {}).original || 0), 0);
+    const scen = plAccounts.reduce((s, a) => s + ((a.months[m] || {}).scenario || 0), 0);
+    plMonthTotals[m] = { original: orig, scenario: scen, delta: scen - orig };
   }
-  h += ptCell(grand, _previewMode, "pt-rt");
+  h += `<tr class="trow"><td class="pt-ac">P&L Total</td>`;
+  for (const m of months) {
+    h += ptCell(plMonthTotals[m], _previewMode, "");
+  }
+  h += ptCell(plGrand, _previewMode, "pt-rt");
   h += `</tr></tbody></table></div>`;
 
   document.getElementById("preview-body").innerHTML = h;
@@ -1595,6 +1699,231 @@ function toggleGroup(key) {
   // Rotate chevron on the header row
   const hdr = document.querySelector(`.grow[data-grp="${key}"]`);
   if (hdr) hdr.classList.toggle("collapsed", !isCollapsed);
+}
+
+/** Render a delta-bridge waterfall: Original → per-group deltas → Scenario (P&L only). */
+function renderWaterfall(groups) {
+  // Compute P&L-only grand from the already-filtered groups
+  const plGrandOrig = groups.reduce((s, g) => s + g.total.original, 0);
+
+  // Only groups with a material change
+  const changed = groups.filter(g => Math.abs(g.total.delta) >= 0.5);
+
+  // Build bars: Original → deltas → Scenario
+  const bars = [];
+  const origVal = plGrandOrig;
+  bars.push({ label: 'Original', value: origVal, from: 0, to: origVal, type: 'anchor' });
+
+  let running = origVal;
+  for (const g of changed) {
+    const d = g.total.delta;
+    bars.push({ label: g.label, value: d, from: running, to: running + d, type: d >= 0 ? 'pos' : 'neg' });
+    running += d;
+  }
+
+  bars.push({ label: 'Scenario', value: running, from: 0, to: running, type: 'anchor' });
+
+  // ── Chart geometry ──────────────────────────────────────────────────────
+  const n  = bars.length;
+  const W  = Math.max(520, n * 120);
+  const H  = 420;
+  const M  = { top: 50, right: 36, bottom: 74, left: 80 };
+  const pw = W - M.left - M.right;
+  const ph = H - M.top - M.bottom;
+  const gap = pw * 0.035;
+  const bw  = (pw - gap * (n + 1)) / n;
+
+  // Y-axis domain
+  const allY = bars.flatMap(b => [b.from, b.to, 0]);
+  let yMax = Math.max(...allY);
+  let yMin = Math.min(...allY);
+  const yPad = (yMax - yMin || 1) * 0.14;
+  yMax += yPad;
+  yMin -= yPad * 0.4;
+
+  const yOf = v => M.top + ph - ((v - yMin) / (yMax - yMin)) * ph;
+
+  // Grid ticks
+  const step = wfNiceStep((yMax - yMin) / 5);
+  const ticks = [];
+  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) ticks.push(v);
+
+  // Colours
+  const COL = { anchor: '#6abbd9', pos: '#27a882', neg: '#d04060' };
+
+  // ── SVG ─────────────────────────────────────────────────────────────────
+  let s = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
+    xmlns="http://www.w3.org/2000/svg" style="font-family:'Inter',sans-serif">`;
+
+  // Grid lines + tick labels
+  for (const v of ticks) {
+    const y = yOf(v);
+    s += `<line x1="${M.left}" y1="${y}" x2="${W - M.right}" y2="${y}"
+      stroke="#e2eaf0" stroke-width="0.6"/>`;
+    s += `<text x="${M.left - 8}" y="${y + 3}" text-anchor="end"
+      font-family="'IBM Plex Mono',monospace" font-size="8.5" fill="#8ca4b4">${wfFmt(v)}</text>`;
+  }
+
+  // Bars, connectors, labels
+  for (let i = 0; i < n; i++) {
+    const b  = bars[i];
+    const x  = M.left + gap + i * (bw + gap);
+    const hi = Math.max(b.from, b.to);
+    const lo = Math.min(b.from, b.to);
+    const yt = yOf(hi);
+    const yb = yOf(lo);
+    const bh = Math.max(yb - yt, 2);
+    const col = COL[b.type];
+
+    // Bar
+    s += `<rect x="${x}" y="${yt}" width="${bw}" height="${bh}" rx="3"
+      fill="${col}" opacity="${b.type === 'anchor' ? 0.92 : 0.82}" class="wf-bar">
+      <title>${escHtml(b.label)}: CHF ${n0s(b.value)}</title></rect>`;
+
+    // Value label — anchors show absolute, deltas show signed change
+    const above  = b.type !== 'neg';
+    const valY   = above ? yt - 7 : yb + 13;
+    let valTxt;
+    if (b.type === 'anchor') {
+      valTxt = wfFmt(Math.abs(b.value));
+    } else {
+      valTxt = (b.value >= 0 ? '+' : '\u2212') + wfFmt(Math.abs(b.value));
+    }
+    s += `<text x="${x + bw / 2}" y="${valY}" text-anchor="middle"
+      font-family="'IBM Plex Mono',monospace" font-size="10" font-weight="600"
+      fill="${col}">${valTxt}</text>`;
+
+    // Connector to next bar
+    if (i < n - 1) {
+      const nx = M.left + gap + (i + 1) * (bw + gap);
+      const cy = yOf(b.to);
+      s += `<line x1="${x + bw}" y1="${cy}" x2="${nx}" y2="${cy}"
+        stroke="#c8d8e4" stroke-width="1" stroke-dasharray="4 2"/>`;
+    }
+
+    // X-axis label (word-wrap long names)
+    const ly = H - M.bottom + 18;
+    const words = b.label.split(/\s+/);
+    if (words.length > 1 && b.label.length > 12) {
+      const mid = Math.ceil(words.length / 2);
+      s += `<text x="${x + bw / 2}" y="${ly}" text-anchor="middle"
+        font-size="10" font-weight="500" fill="#4a6374">${escHtml(words.slice(0, mid).join(' '))}</text>`;
+      s += `<text x="${x + bw / 2}" y="${ly + 13}" text-anchor="middle"
+        font-size="10" font-weight="500" fill="#4a6374">${escHtml(words.slice(mid).join(' '))}</text>`;
+    } else {
+      s += `<text x="${x + bw / 2}" y="${ly}" text-anchor="middle"
+        font-size="10" font-weight="${b.type === 'anchor' ? 700 : 500}"
+        fill="${b.type === 'anchor' ? '#1a2e3d' : '#4a6374'}">${escHtml(b.label)}</text>`;
+    }
+  }
+
+  s += `</svg>`;
+  document.getElementById("preview-body").innerHTML = `<div class="wf-wrap">${s}</div>`;
+}
+
+/** Nice round step for axis ticks. */
+function wfNiceStep(rough) {
+  const exp  = Math.floor(Math.log10(Math.abs(rough) || 1));
+  const frac = rough / Math.pow(10, exp);
+  const nice = frac <= 1.5 ? 1 : frac <= 3 ? 2 : frac <= 7 ? 5 : 10;
+  return nice * Math.pow(10, exp);
+}
+
+/** Compact number format for chart labels (e.g. 1.2M, 450K). */
+function wfFmt(v) {
+  const a = Math.abs(v);
+  if (a >= 1e6) return (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.0', '') + 'M';
+  if (a >= 1e3) return Math.round(a / 1e3) + 'K';
+  return String(Math.round(a));
+}
+
+/** Switch between P&L and Cashflow tabs. */
+function setPreviewTab(tab, rerender = true) {
+  _previewTab = tab;
+  document.getElementById("ptab-pl").classList.toggle("active", tab === "pl");
+  document.getElementById("ptab-cf").classList.toggle("active", tab === "cf");
+  // Show view toggle for both tabs; hide waterfall for CF
+  document.getElementById("pl-view-toggle").style.display = "";
+  document.getElementById("vt-waterfall").style.display = tab === "pl" ? "" : "none";
+  // If CF tab and current mode is waterfall, switch to delta
+  if (tab === "cf" && _previewMode === "waterfall") setPreviewMode("delta", false);
+  if (rerender && _previewData) {
+    if (tab === "pl") renderPreview();
+    else              renderCashflowPreview();
+  }
+}
+
+/** Render the cashflow impact table from _previewData.cashflow. */
+function renderCashflowPreview() {
+  const cf = _previewData.cashflow;
+  if (!cf || !cf.length) {
+    document.getElementById("preview-body").innerHTML =
+      `<div style="padding:48px;text-align:center;color:var(--muted);font-size:13px">
+         Cashflow structure not available — ensure Power BI is connected.
+       </div>`;
+    return;
+  }
+
+  const mode = _previewMode;   // 'delta' or 'compare'
+
+  // Section headers inserted before each group
+  const SECTIONS = {
+    4:  "Operating Activities",
+    17: "Investing Activities",
+    22: "Financing Activities",
+    26: "Summary",
+  };
+  // Items to skip in the display (verification / residual duplicates)
+  const SKIP = new Set([29, 30]);
+
+  const colSpan = mode === "compare" ? 4 : 2;
+  let h = `<div class="cf-wrap"><table class="cf-tbl"><thead><tr>
+    <th style="width:${mode === 'compare' ? '40%' : '60%'}">Cashflow Line Item</th>`;
+  if (mode === "compare") {
+    h += `<th>Original (CHF)</th><th>Scenario (CHF)</th><th>Delta (CHF)</th>`;
+  } else {
+    h += `<th>Scenario Delta (CHF)</th>`;
+  }
+  h += `</tr></thead><tbody>`;
+
+  // CF summary line
+  const cfTotal = cf.find(r => r.sort === 28) || cf[cf.length - 1];
+  if (cfTotal) {
+    const sign = cfTotal.delta >= 0 ? "+" : "−";
+    const cls  = cfTotal.delta >= 0 ? "pos" : "neg";
+    document.getElementById("preview-summary").innerHTML =
+      `Net cash impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(cfTotal.delta))}</span>`;
+  }
+
+  for (const row of cf) {
+    if (SKIP.has(row.sort)) continue;
+
+    // Insert section header
+    if (SECTIONS[row.sort]) {
+      h += `<tr class="cf-section"><td colspan="${colSpan}">${SECTIONS[row.sort]}</td></tr>`;
+    }
+
+    const zero    = Math.abs(row.delta) < 0.5;
+    const pn      = row.delta >= 0 ? "cf-pos" : "cf-neg";
+    const rowCls  = row.is_subtotal ? "cf-sub" : (zero ? "cf-zero" : "");
+    const indent  = row.is_subtotal ? "" : "padding-left:32px;";
+
+    h += `<tr class="${rowCls}">`;
+    h += `<td style="${indent}">${escHtml(row.display)}</td>`;
+
+    if (mode === "compare") {
+      h += `<td>${n0s(row.original)}</td>`;
+      h += `<td class="${zero ? '' : pn}">${n0s(row.scenario)}</td>`;
+      h += `<td class="${zero ? '' : pn}">${zero ? '—' : fmtDelta(row.delta)}</td>`;
+    } else {
+      const valTxt = zero ? "—" : fmtDelta(row.delta);
+      h += `<td class="${zero ? '' : pn}">${valTxt}</td>`;
+    }
+    h += `</tr>`;
+  }
+
+  h += `</tbody></table></div>`;
+  document.getElementById("preview-body").innerHTML = h;
 }
 
 function closePreview() {
