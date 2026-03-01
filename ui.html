@@ -201,6 +201,9 @@
                   box-shadow: 0 2px 8px rgba(106,187,217,0.38); }
   .h-btn.accent:hover { background: var(--accent-dk); box-shadow: 0 3px 12px rgba(106,187,217,0.48); }
   .h-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .h-btn.models-btn { background: #2563eb; border-color: transparent; color: #fff;
+                     box-shadow: 0 2px 8px rgba(37,99,235,0.38); }
+  .h-btn.models-btn:hover { background: #1d4ed8; box-shadow: 0 3px 12px rgba(37,99,235,0.48); }
 
 
   /* ══════════════════════════════════════
@@ -750,6 +753,41 @@
   .mo-source-dot { width: 5px; height: 5px; border-radius: 50%; }
   .mo-source-dot.on  { background: var(--green); }
   .mo-source-dot.off { background: var(--muted); }
+  .mo-source-remove {
+    margin-left: auto; cursor: pointer; font-size: 12px; color: var(--muted);
+    background: none; border: none; padding: 0 2px; line-height: 1;
+  }
+  .mo-source-remove:hover { color: var(--red); }
+  .mo-item.measure { border-left-color: #a78bfa; }
+  .se-row {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+    border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px;
+    background: var(--bg);
+  }
+  .se-row input, .se-row textarea {
+    flex: 1; font-size: 12px; font-family: inherit; padding: 4px 6px;
+    border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+    color: var(--text);
+  }
+  .se-row textarea { min-height: 40px; resize: vertical; }
+  .se-row label { font-size: 10px; color: var(--muted); min-width: 60px; text-transform: uppercase; font-weight: 600; }
+  .se-remove {
+    cursor: pointer; color: var(--muted); background: none; border: none;
+    font-size: 14px; padding: 2px 4px;
+  }
+  .se-remove:hover { color: var(--red); }
+  .se-add {
+    display: inline-block; font-size: 11px; cursor: pointer; color: var(--accent);
+    background: none; border: 1px dashed var(--accent); border-radius: 4px;
+    padding: 4px 10px; margin-top: 4px; font-family: inherit; font-weight: 600;
+  }
+  .se-add:hover { background: var(--accent-lt); }
+  .base-select {
+    width: 100%; padding: 6px 8px; font-size: 12px; font-family: inherit;
+    border: 1px solid var(--border2); border-radius: var(--rs);
+    background: var(--surface); color: var(--text); cursor: pointer;
+  }
+  .base-select:focus { border-color: var(--accent); outline: none; }
 
   /* --- Generic sidebar buttons --- */
   .s-btn {
@@ -1268,27 +1306,7 @@
   </div>
 
   <div class="header-actions">
-    <button class="h-btn" onclick="openModelsModal()" title="Manage saved models">&#9776; Models</button>
-    <button class="h-btn" onclick="resetChat()">&#8634; Reset</button>
-    <div class="ds-dropdown" id="ds-dropdown">
-      <button class="h-btn accent" id="connect-btn" onclick="toggleDataSourceMenu()">&#8853; Data Source</button>
-      <div class="ds-dropdown-menu">
-        <button class="ds-dropdown-item" onclick="connectPBI()">
-          <span class="ds-icon">&#8853;</span>
-          <span>
-            <span class="ds-label">Connect PBI</span>
-            <span class="ds-sub">Open Power BI Desktop model</span>
-          </span>
-        </button>
-        <button class="ds-dropdown-item" onclick="uploadExcel()">
-          <span class="ds-icon">&#8593;</span>
-          <span>
-            <span class="ds-label">Upload Excel</span>
-            <span class="ds-sub">Upload .xlsx files as data source</span>
-          </span>
-        </button>
-      </div>
-    </div>
+    <button class="h-btn models-btn" onclick="openModelsModal()" title="Manage saved models">&#9776; Models</button>
   </div>
 </header>
 
@@ -1392,6 +1410,18 @@
         &#8595; Conservative -5% Rev
         <span class="qb-sub">Full year downside</span>
       </button>
+    </div>
+  </div>
+
+  <!-- -- Baseline Selector -- -->
+  <div class="zone-quick" id="base-selector-zone" style="display:none">
+    <div class="zone-hd zone-bd">
+      <span class="zone-title">Baseline</span>
+    </div>
+    <div style="padding:4px 10px 8px">
+      <select class="base-select" id="base-type-select" onchange="setBaseType(this.value)">
+        <option value="budget">Budget</option>
+      </select>
     </div>
   </div>
 
@@ -1566,6 +1596,19 @@
   </div>
 </div>
 
+<!-- ════ SECTION EDITOR MODAL ════ -->
+<div class="modal-overlay" id="section-editor-modal">
+  <div class="modal" style="width:620px; max-height:78vh">
+    <div class="modal-header">
+      <span class="modal-title" id="section-editor-title">Edit Section</span>
+      <button class="m-btn primary" onclick="saveSectionEditor()">Save</button>
+      <button class="m-btn" onclick="closeSectionEditor()">&#10005; Close</button>
+    </div>
+    <div class="modal-body" id="section-editor-body" style="padding:16px; overflow-y:auto">
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1611,6 +1654,7 @@ function switchMainTab(tab) {
 
   // Scenario-only sidebar zones
   document.getElementById("sidebar-quick-actions").style.display = isScenario ? "" : "none";
+  document.getElementById("base-selector-zone").style.display = isScenario ? "" : "none";
   document.getElementById("builder-section").style.display = isScenario ? "" : "none";
   document.getElementById("sidebar-stats").style.display = isScenario ? "" : "none";
   document.getElementById("sidebar-files").style.display = isScenario ? "" : "none";
@@ -1624,6 +1668,7 @@ function switchMainTab(tab) {
   if (tab === "scenario") {
     document.getElementById("scenario-notice").style.display =
       _modelStatus === "confirmed" ? "none" : "flex";
+    loadBaseTypes();
   }
 }
 
@@ -1804,19 +1849,25 @@ function renderModelOverview(d, container) {
   }
 
   // Sources
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Sources
+      <button class="mo-edit" onclick="addModelSource()">+</button>
+    </div>`;
   if (d.sources && d.sources.length) {
-    html += `<div class="mo-section">
-      <div class="mo-section-hd">Sources</div>`;
     for (const s of d.sources) {
       const dot = s.connected ? 'on' : 'off';
       const icon = s.source_type === 'pbi_desktop' ? '&#128202;' : '&#128196;';
+      const linkId = s.link_id || '';
       html += `<div class="mo-source-item">
         <span class="mo-source-dot ${dot}"></span>
         ${icon} ${escHtml(s.label)}
+        ${linkId ? `<button class="mo-source-remove" onclick="removeModelSource('${escHtml(linkId)}')" title="Remove source">&times;</button>` : ''}
       </div>`;
     }
-    html += `</div>`;
+  } else {
+    html += `<div class="mo-source-item" style="color:var(--muted);font-size:10px">No sources linked</div>`;
   }
+  html += `</div>`;
 
   // Fact Tables
   html += `<div class="mo-section">
@@ -1868,6 +1919,22 @@ function renderModelOverview(d, container) {
   }
   html += `</div>`;
 
+  // Measures
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Measures
+      <button class="mo-edit" onclick="editModelSection('measures')">Edit</button>
+    </div>`;
+  if (d.measures && d.measures.length) {
+    for (const m of d.measures) {
+      html += `<div class="mo-item measure">
+        <div class="mo-item-name">[${escHtml(m.table || '')}] ${escHtml(m.name)}</div>
+      </div>`;
+    }
+  } else {
+    html += `<div class="mo-item"><span class="mo-badge missing">None</span></div>`;
+  }
+  html += `</div>`;
+
   // Query Templates
   html += `<div class="mo-section">
     <div class="mo-section-hd">Query Templates
@@ -1909,19 +1976,379 @@ function renderModelOverview(d, container) {
   container.innerHTML = html;
 }
 
+// ── Section Editor Modal ───────────────────────────────────────────
+let _sectionEditorData = null;
+let _sectionEditorType = null;
+
 function editModelSection(section) {
-  // Switch to discovery tab and send a relevant prompt
-  switchMainTab("discovery");
-  const prompts = {
-    fact_tables:    "Review and update the fact tables in the model understanding. Which tables contain the main transactional data?",
-    dimensions:     "Review and update the dimension tables. Which tables provide lookup/reference data for the fact tables?",
-    relationships:  "Review and update the relationships between tables. How are the fact and dimension tables connected?",
-    queries:        "Review and regenerate the query templates (fetch_budget and fetch_account_map). Test them to ensure they work correctly.",
-    accounts:       "Review and update the account structure. Which column groups define revenue, COGS, and other P&L categories?",
-    filters:        "Review and update the filter dimensions. Which columns should be used to filter data (e.g., company, department)?",
+  _sectionEditorType = section;
+  openSectionEditorModal(section);
+}
+
+async function openSectionEditorModal(section) {
+  const titleEl = document.getElementById('section-editor-title');
+  const bodyEl  = document.getElementById('section-editor-body');
+  bodyEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div>';
+  const titles = {
+    fact_tables: 'Edit Fact Tables', dimensions: 'Edit Dimensions',
+    relationships: 'Edit Relationships', queries: 'Edit Query Templates',
+    accounts: 'Edit Account Structure', filters: 'Edit Filters',
+    measures: 'Edit Measures',
   };
-  const prompt = prompts[section] || "Review the model understanding and suggest improvements.";
-  discoveryQuickSend(prompt);
+  titleEl.textContent = titles[section] || 'Edit Section';
+  document.getElementById('section-editor-modal').classList.add('open');
+
+  try {
+    const r = await fetch('/api/model/understanding').then(r => r.json());
+    if (!r.ok) { bodyEl.innerHTML = '<div style="color:var(--red)">Failed to load</div>'; return; }
+    _sectionEditorData = r.data || {};
+    renderSectionEditorBody(section, bodyEl);
+  } catch(e) {
+    bodyEl.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderSectionEditorBody(section, el) {
+  const d = _sectionEditorData;
+  let html = '';
+
+  if (section === 'fact_tables' || section === 'dimensions') {
+    const role = section === 'fact_tables' ? 'fact' : 'dimension';
+    const tables = Object.entries(d.tables || {}).filter(([,v]) => v.role === role);
+    html += `<div id="se-items">`;
+    for (const [name, info] of tables) {
+      html += `<div class="se-row" data-name="${escHtml(name)}">
+        <label>Name</label><input type="text" class="se-name" value="${escHtml(name)}" readonly style="background:var(--bg)">
+        <label>Desc</label><input type="text" class="se-desc" value="${escHtml(info.description || '')}">
+        <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<button class="se-add" onclick="addSectionRow_table('${role}')">+ Add Table</button>`;
+  }
+  else if (section === 'relationships') {
+    const rels = d.relationships || [];
+    html += `<div id="se-items">`;
+    for (const r of rels) {
+      html += `<div class="se-row">
+        <input type="text" class="se-ft" value="${escHtml(r.from_table || '')}" placeholder="From table" style="flex:1">
+        <input type="text" class="se-fc" value="${escHtml(r.from_column || '')}" placeholder="From col" style="flex:1">
+        <span style="color:var(--muted)">&rarr;</span>
+        <input type="text" class="se-tt" value="${escHtml(r.to_table || '')}" placeholder="To table" style="flex:1">
+        <input type="text" class="se-tc" value="${escHtml(r.to_column || '')}" placeholder="To col" style="flex:1">
+        <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<button class="se-add" onclick="addSectionRow_rel()">+ Add Relationship</button>`;
+  }
+  else if (section === 'queries') {
+    const qt = d.query_templates || {};
+    html += `<div id="se-items">`;
+    for (const [name, tmpl] of Object.entries(qt)) {
+      html += `<div class="se-row" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;align-items:center;gap:6px">
+          <label>Name</label><input type="text" class="se-qname" value="${escHtml(name)}" style="flex:1">
+          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+        </div>
+        <textarea class="se-qval" style="font-family:monospace;font-size:11px">${escHtml(tmpl)}</textarea>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<button class="se-add" onclick="addSectionRow_query()">+ Add Template</button>`;
+  }
+  else if (section === 'accounts') {
+    const as = d.account_structure || {};
+    html += `<div style="margin-bottom:8px">`;
+    html += `<div class="se-row"><label>Account Table</label><input type="text" id="se-acct-table" value="${escHtml(as.account_table || '')}"></div>`;
+    html += `<div class="se-row"><label>ID Column</label><input type="text" id="se-acct-id" value="${escHtml(as.account_id_column || '')}"></div>`;
+    html += `<div class="se-row"><label>Name Column</label><input type="text" id="se-acct-name" value="${escHtml(as.account_name_column || '')}"></div>`;
+    html += `</div>`;
+    html += `<div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;margin:8px 0 4px">Groups</div>`;
+    html += `<div id="se-items">`;
+    for (const [gname, ginfo] of Object.entries(as.groups || {})) {
+      const ids = (ginfo.account_ids || []).join(', ');
+      html += `<div class="se-row" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:6px;align-items:center">
+          <label>Group</label><input type="text" class="se-gname" value="${escHtml(gname)}" style="flex:1">
+          <label>Desc</label><input type="text" class="se-gdesc" value="${escHtml(ginfo.description || '')}" style="flex:1">
+          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <label>IDs</label><input type="text" class="se-gids" value="${escHtml(ids)}" placeholder="Comma-separated account IDs" style="flex:1">
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<button class="se-add" onclick="addSectionRow_group()">+ Add Group</button>`;
+  }
+  else if (section === 'filters') {
+    const fd = d.filter_dimensions || {};
+    html += `<div id="se-items">`;
+    for (const [fname, finfo] of Object.entries(fd)) {
+      html += `<div class="se-row">
+        <label>Name</label><input type="text" class="se-fname" value="${escHtml(fname)}" style="flex:1">
+        <label>Column</label><input type="text" class="se-fcol" value="${escHtml(finfo.column || '')}" style="flex:1">
+        <label>Default</label><input type="text" class="se-fval" value="${escHtml(String(finfo.default_value ?? ''))}" style="flex:0.7">
+        <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<button class="se-add" onclick="addSectionRow_filter()">+ Add Filter</button>`;
+  }
+  else if (section === 'measures') {
+    const measures = d.measures || {};
+    html += `<div id="se-items">`;
+    for (const [mname, minfo] of Object.entries(measures)) {
+      html += `<div class="se-row" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;gap:6px;align-items:center">
+          <label>Name</label><input type="text" class="se-mname" value="${escHtml(mname)}" style="flex:1">
+          <label>Table</label><input type="text" class="se-mtable" value="${escHtml(minfo.table || '')}" style="flex:0.7">
+          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+        </div>
+        <textarea class="se-mexpr" style="font-family:monospace;font-size:11px" placeholder="DAX expression">${escHtml(minfo.expression || '')}</textarea>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<button class="se-add" onclick="addSectionRow_measure()">+ Add Measure</button>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function addSectionRow_table(role) {
+  const c = document.getElementById('se-items');
+  const div = document.createElement('div');
+  div.className = 'se-row';
+  div.innerHTML = `<label>Name</label><input type="text" class="se-name" placeholder="Table name">
+    <label>Desc</label><input type="text" class="se-desc" placeholder="Description">
+    <input type="hidden" class="se-role" value="${role}">
+    <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>`;
+  c.appendChild(div);
+}
+function addSectionRow_rel() {
+  const c = document.getElementById('se-items');
+  const div = document.createElement('div');
+  div.className = 'se-row';
+  div.innerHTML = `<input type="text" class="se-ft" placeholder="From table" style="flex:1">
+    <input type="text" class="se-fc" placeholder="From col" style="flex:1">
+    <span style="color:var(--muted)">&rarr;</span>
+    <input type="text" class="se-tt" placeholder="To table" style="flex:1">
+    <input type="text" class="se-tc" placeholder="To col" style="flex:1">
+    <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>`;
+  c.appendChild(div);
+}
+function addSectionRow_query() {
+  const c = document.getElementById('se-items');
+  const div = document.createElement('div');
+  div.className = 'se-row';
+  div.setAttribute('style', 'flex-direction:column;align-items:stretch');
+  div.innerHTML = `<div style="display:flex;align-items:center;gap:6px">
+      <label>Name</label><input type="text" class="se-qname" placeholder="template_name" style="flex:1">
+      <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+    </div>
+    <textarea class="se-qval" style="font-family:monospace;font-size:11px" placeholder="Query template..."></textarea>`;
+  c.appendChild(div);
+}
+function addSectionRow_group() {
+  const c = document.getElementById('se-items');
+  const div = document.createElement('div');
+  div.className = 'se-row';
+  div.setAttribute('style', 'flex-direction:column;align-items:stretch');
+  div.innerHTML = `<div style="display:flex;gap:6px;align-items:center">
+      <label>Group</label><input type="text" class="se-gname" placeholder="Group name" style="flex:1">
+      <label>Desc</label><input type="text" class="se-gdesc" placeholder="Description" style="flex:1">
+      <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <label>IDs</label><input type="text" class="se-gids" placeholder="Comma-separated account IDs" style="flex:1">
+    </div>`;
+  c.appendChild(div);
+}
+function addSectionRow_filter() {
+  const c = document.getElementById('se-items');
+  const div = document.createElement('div');
+  div.className = 'se-row';
+  div.innerHTML = `<label>Name</label><input type="text" class="se-fname" placeholder="filter_name" style="flex:1">
+    <label>Column</label><input type="text" class="se-fcol" placeholder="column_name" style="flex:1">
+    <label>Default</label><input type="text" class="se-fval" placeholder="value" style="flex:0.7">
+    <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>`;
+  c.appendChild(div);
+}
+function addSectionRow_measure() {
+  const c = document.getElementById('se-items');
+  const div = document.createElement('div');
+  div.className = 'se-row';
+  div.setAttribute('style', 'flex-direction:column;align-items:stretch');
+  div.innerHTML = `<div style="display:flex;gap:6px;align-items:center">
+      <label>Name</label><input type="text" class="se-mname" placeholder="Measure name" style="flex:1">
+      <label>Table</label><input type="text" class="se-mtable" placeholder="Table" style="flex:0.7">
+      <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+    </div>
+    <textarea class="se-mexpr" style="font-family:monospace;font-size:11px" placeholder="DAX expression"></textarea>`;
+  c.appendChild(div);
+}
+
+function closeSectionEditor() {
+  document.getElementById('section-editor-modal').classList.remove('open');
+  _sectionEditorData = null;
+  _sectionEditorType = null;
+}
+
+async function saveSectionEditor() {
+  const section = _sectionEditorType;
+  const d = _sectionEditorData;
+  let patch = {};
+
+  if (section === 'fact_tables' || section === 'dimensions') {
+    const role = section === 'fact_tables' ? 'fact' : 'dimension';
+    // Remove old entries of this role from tables
+    const tables = {...(d.tables || {})};
+    for (const [k, v] of Object.entries(tables)) {
+      if (v.role === role) delete tables[k];
+    }
+    // Add current rows
+    for (const row of document.querySelectorAll('#se-items .se-row')) {
+      const name = row.querySelector('.se-name')?.value.trim();
+      const desc = row.querySelector('.se-desc')?.value.trim();
+      if (name) {
+        tables[name] = {...(d.tables?.[name] || {}), role, description: desc};
+      }
+    }
+    patch.tables = tables;
+  }
+  else if (section === 'relationships') {
+    const rels = [];
+    for (const row of document.querySelectorAll('#se-items .se-row')) {
+      const ft = row.querySelector('.se-ft')?.value.trim();
+      const fc = row.querySelector('.se-fc')?.value.trim();
+      const tt = row.querySelector('.se-tt')?.value.trim();
+      const tc = row.querySelector('.se-tc')?.value.trim();
+      if (ft && fc && tt && tc) rels.push({from_table: ft, from_column: fc, to_table: tt, to_column: tc});
+    }
+    patch.relationships = rels;
+  }
+  else if (section === 'queries') {
+    const qt = {};
+    for (const row of document.querySelectorAll('#se-items .se-row')) {
+      const name = row.querySelector('.se-qname')?.value.trim();
+      const val = row.querySelector('.se-qval')?.value.trim();
+      if (name && val) qt[name] = val;
+    }
+    patch.query_templates = qt;
+  }
+  else if (section === 'accounts') {
+    const as = {...(d.account_structure || {})};
+    as.account_table = document.getElementById('se-acct-table')?.value.trim() || '';
+    as.account_id_column = document.getElementById('se-acct-id')?.value.trim() || '';
+    as.account_name_column = document.getElementById('se-acct-name')?.value.trim() || '';
+    const groups = {};
+    for (const row of document.querySelectorAll('#se-items .se-row')) {
+      const gname = row.querySelector('.se-gname')?.value.trim();
+      const gdesc = row.querySelector('.se-gdesc')?.value.trim();
+      const gids = row.querySelector('.se-gids')?.value.trim();
+      if (gname) {
+        groups[gname] = {
+          description: gdesc,
+          account_ids: gids ? gids.split(',').map(s => {const n = parseInt(s.trim()); return isNaN(n) ? s.trim() : n;}) : [],
+        };
+      }
+    }
+    as.groups = groups;
+    patch.account_structure = as;
+  }
+  else if (section === 'filters') {
+    const fd = {};
+    for (const row of document.querySelectorAll('#se-items .se-row')) {
+      const fname = row.querySelector('.se-fname')?.value.trim();
+      const fcol = row.querySelector('.se-fcol')?.value.trim();
+      const fval = row.querySelector('.se-fval')?.value.trim();
+      if (fname) {
+        const dv = isNaN(Number(fval)) ? fval : Number(fval);
+        fd[fname] = {table: d.filter_dimensions?.[fname]?.table || '', column: fcol, default_value: dv};
+      }
+    }
+    patch.filter_dimensions = fd;
+  }
+  else if (section === 'measures') {
+    const measures = {};
+    for (const row of document.querySelectorAll('#se-items .se-row')) {
+      const mname = row.querySelector('.se-mname')?.value.trim();
+      const mtable = row.querySelector('.se-mtable')?.value.trim();
+      const mexpr = row.querySelector('.se-mexpr')?.value.trim();
+      if (mname) measures[mname] = {table: mtable, expression: mexpr, description: ''};
+    }
+    patch.measures = measures;
+  }
+
+  try {
+    const r = await fetch('/api/model/understanding/patch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(patch),
+    }).then(r => r.json());
+    if (r.ok) {
+      toast('Section updated');
+      closeSectionEditor();
+      refreshModelOverview();
+    } else {
+      toast(r.error || 'Save failed', true);
+    }
+  } catch(e) {
+    toast(e.message, true);
+  }
+}
+
+// ── Source Management ──────────────────────────────────────────────
+function addModelSource() {
+  // Open the PBI picker / Excel upload flow
+  connect();
+}
+
+async function removeModelSource(linkId) {
+  if (!_currentModelId || !linkId) return;
+  try {
+    const r = await fetch(`/api/models/${_currentModelId}/sources/${linkId}`, {method: 'DELETE'}).then(r => r.json());
+    if (r.ok) {
+      toast('Source removed');
+      refreshModelOverview();
+    }
+  } catch(e) {
+    toast(e.message, true);
+  }
+}
+
+// ── Base Type Selector ────────────────────────────────────────────
+async function loadBaseTypes() {
+  try {
+    const r = await fetch('/api/scenario/base-types').then(r => r.json());
+    if (!r.ok) return;
+    const sel = document.getElementById('base-type-select');
+    const zone = document.getElementById('base-selector-zone');
+    if (!r.types || r.types.length === 0) { zone.style.display = 'none'; return; }
+    sel.innerHTML = '';
+    for (const t of r.types) {
+      const opt = document.createElement('option');
+      opt.value = t.name;
+      opt.textContent = t.name.charAt(0).toUpperCase() + t.name.slice(1) + ` (${t.value})`;
+      if (t.name === r.active) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    zone.style.display = '';
+  } catch(e) {
+    document.getElementById('base-selector-zone').style.display = 'none';
+  }
+}
+
+async function setBaseType(type) {
+  try {
+    await fetch('/api/scenario/set-base', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({base_type: type}),
+    });
+    toast(`Baseline: ${type}`);
+  } catch(e) { /* ignore */ }
 }
 
 async function refreshModelUnderstanding() {
@@ -2443,7 +2870,11 @@ function renderPreview() {
     : PL_GROUPS;
 
   // Filter to P&L accounts only for this view
-  const plAccounts = accounts.filter(a => plGroupSet.has(a.grp));
+  let plAccounts = accounts.filter(a => plGroupSet.has(a.grp));
+  // Fallback: if filter yields no accounts, show all accounts
+  if (plAccounts.length === 0) {
+    plAccounts = accounts;
+  }
 
   // ── Summary line (P&L only) ───────────────────────────────────────────────
   const changedAccs   = plAccounts.filter(a => Math.abs(a.total.delta) >= 0.5).length;

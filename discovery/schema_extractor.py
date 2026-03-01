@@ -80,11 +80,15 @@ class SchemaExtractor:
                 "statistics":  stats,
             })
 
+        # Extract DAX measures (PBI only; returns [] for other sources)
+        measures = await self.source.get_measures()
+
         result = {
             "source_type":    self.source.source_type(),
             "query_language": self.source.query_language(),
             "tables":         enriched_tables,
             "relationships":  relationships,
+            "measures":       measures,
         }
 
         total_rows = sum(t.get("row_count", 0) or 0 for t in enriched_tables)

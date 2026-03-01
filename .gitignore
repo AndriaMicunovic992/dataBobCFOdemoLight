@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+data/scenario_agent.db
+output/*.sql
+uploads/
+.DS_Store
+*.egg-info/
+dist/
+build/

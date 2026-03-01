@@ -28,8 +28,9 @@ async def main():
     print(f"  Output: {OUTPUT_DIR}")
     print("=" * 55)
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY is not set.")
+    from config import DISCOVERY_API_KEY, SCENARIO_API_KEY
+    if not (DISCOVERY_API_KEY or SCENARIO_API_KEY):
+        print("ERROR: No API key set. Use ANTHROPIC_API_KEY or DISCOVERY_API_KEY + SCENARIO_API_KEY")
         sys.exit(1)
 
     # ── Discover open Power BI Desktop models ─────────────────────────────────

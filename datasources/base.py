@@ -77,3 +77,7 @@ class DataSource(ABC):
     @abstractmethod
     def supports_writeback(self) -> bool:
         """Whether this source supports writing scenario data back."""
+
+    async def get_measures(self) -> list[dict]:
+        """Return DAX measures from the model. Default: empty (non-PBI sources)."""
+        return []
