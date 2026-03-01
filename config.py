@@ -1,12 +1,9 @@
 """
 config.py — Infrastructure configuration (model-agnostic).
 
-All model-specific values (COMPANY_ID, account sets, table names) now live
-in the ModelUnderstanding document. This file only contains infrastructure
-settings: paths, ports, Claude model, and the PBI MCP executable location.
-
-Legacy constants (COMPANY_ID, REVENUE_ACCS, COGS_ACCS) are preserved for
-backward compatibility but should not be used in new code.
+All model-specific values (account sets, table names, etc.) live in the
+ModelUnderstanding document. This file only contains infrastructure settings:
+paths, ports, Claude model, and the PBI MCP executable location.
 """
 
 import os
@@ -36,12 +33,3 @@ POWERBI_EXE = os.environ.get("POWERBI_MCP_EXE",
 # ── Server ────────────────────────────────────────────────────────────────
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "5000"))
-
-# ── Legacy constants (backward compat — use ModelUnderstanding instead) ───
-COMPANY_ID   = 4
-REVENUE_ACCS = {112, 114, 118, 119, 120, 121, 122, 123, 124, 130}
-COGS_ACCS    = {126, 127}
-
-# Legacy cache DB path (kept for cache.py backward compat)
-import tempfile
-CACHE_DB = Path(tempfile.gettempdir()) / "finance_scenario_cache.db"

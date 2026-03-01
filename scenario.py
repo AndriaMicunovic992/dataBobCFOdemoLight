@@ -7,17 +7,14 @@ Provides:
   save_sql()        — write the SQL script to the output folder
 
 All model-specific values (company ID, account sets, table names) are passed
-as parameters rather than imported from config, making this module model-agnostic.
-
-Legacy imports from config are preserved for backward compatibility.
+as parameters from the ModelUnderstanding document.
 """
 
 import re
 from datetime import datetime
 from pathlib import Path
 
-# Legacy imports — used only by callers that don't pass model params
-from config import COMPANY_ID, REVENUE_ACCS, COGS_ACCS, OUTPUT_DIR
+from config import OUTPUT_DIR
 
 
 def build_scenario(rows: list[dict], adjustments: list[dict],
@@ -37,14 +34,14 @@ def build_scenario(rows: list[dict], adjustments: list[dict],
     Args:
         rows:         Budget baseline rows.
         adjustments:  List of adjustment dicts.
-        revenue_accs: Set of revenue account IDs. Falls back to config.REVENUE_ACCS.
-        cogs_accs:    Set of COGS account IDs. Falls back to config.COGS_ACCS.
+        revenue_accs: Set of revenue account IDs from ModelUnderstanding.
+        cogs_accs:    Set of COGS account IDs from ModelUnderstanding.
 
     Returns a new list of row dicts with amount and budget_amount scaled.
     All other FK columns (currency_id, cost_object_id, …) are preserved as-is.
     """
-    _rev = revenue_accs if revenue_accs is not None else REVENUE_ACCS
-    _cogs = cogs_accs if cogs_accs is not None else COGS_ACCS
+    _rev = revenue_accs or set()
+    _cogs = cogs_accs or set()
 
     scenario = [dict(r) for r in rows]   # shallow copy — values are primitives
 
@@ -104,14 +101,14 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
     Args:
         scenario_id: The value_type_id written into every row.
         target_table: SQL table name (default: "[Fakten Hauptbuch]").
-        company_id:   Company ID for the INSERT (default: config.COMPANY_ID).
+        company_id:   Company ID for the INSERT from ModelUnderstanding.
         columns:      List of columns to include. If None, uses the default set.
 
     Includes a header comment, a commented-out DELETE statement for safe
     re-loading, the INSERT VALUES block, and a verification SELECT.
     """
     _table = target_table or "[Fakten Hauptbuch]"
-    _company = company_id if company_id is not None else COMPANY_ID
+    _company = company_id if company_id is not None else 0
 
     dates       = sorted({r["date"] for r in scenario})
     sorted_rows = sorted(scenario, key=lambda r: (r["date"], r["account"]))

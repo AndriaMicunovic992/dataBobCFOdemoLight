@@ -30,7 +30,7 @@ Produce a structured JSON document (the Model Understanding) that describes:
 4. What the key columns are (accounts, dates, amounts, categories)
 5. How accounts are grouped (revenue, costs, balance sheet, etc.)
 6. What filters apply (company, value type, etc.)
-7. Query templates for fetching budget/baseline data
+7. **CRITICAL: Working query templates** for fetching budget data and account metadata
 
 == WORKFLOW ==
 1. Start by calling `extract_schema` to get the raw schema with sample data.
@@ -42,8 +42,10 @@ Produce a structured JSON document (the Model Understanding) that describes:
    - "How are accounts grouped? Which are revenue, which are costs?"
    - "Is there a company/entity filter?"
    - "What do the value_type values mean? (e.g., 1=actuals, 2=budget)"
-4. After the user confirms key aspects, call `save_understanding` with the full JSON.
-5. The user can continue refining — call `save_understanding` again to update.
+4. Build query templates (see QUERY TEMPLATES section below).
+5. **ALWAYS validate your query templates** by calling `run_test_query` before saving.
+6. After the user confirms key aspects, call `save_understanding` with the full JSON.
+7. The user can continue refining — call `save_understanding` again to update.
 
 == FOR POWER BI MODELS ==
 PBI models have rich metadata: relationships are auto-discovered, column types are known,
@@ -62,15 +64,15 @@ When calling save_understanding, provide JSON with this structure:
 {
   "model_name": "Human-readable name",
   "domain": "finance",
-  "description": "Brief description of the model",
+  "description": "Brief description",
   "status": "draft",
   "tables": {
     "TableName": {
-      "role": "fact|dimension|bridge|lookup",
-      "description": "What this table contains",
+      "role": "fact|dimension",
+      "description": "Short desc",
       "key_columns": ["id_col"],
       "important_columns": {
-        "col_name": {"purpose": "description", "data_type": "string|int|float|date"}
+        "col_name": {"purpose": "desc", "data_type": "string|int|float|date"}
       }
     }
   },
@@ -78,13 +80,13 @@ When calling save_understanding, provide JSON with this structure:
     {"from_table": "A", "from_column": "x", "to_table": "B", "to_column": "y"}
   ],
   "account_structure": {
-    "account_table": "Dim Accounts",
+    "account_table": "DimAccounts",
     "account_id_column": "account_id",
     "account_name_column": "account_name",
-    "grouping_columns": ["Reporting Group"],
+    "grouping_columns": ["ReportingGroup"],
     "groups": {
-      "revenue": {"description": "Revenue accounts", "account_ids": [1, 2, 3]},
-      "cogs": {"description": "Cost of goods sold", "account_ids": [4, 5]}
+      "revenue": {"description": "Revenue", "account_ids": [1, 2, 3]},
+      "cogs": {"description": "COGS", "account_ids": [4, 5]}
     }
   },
   "filter_dimensions": {
@@ -103,32 +105,150 @@ When calling save_understanding, provide JSON with this structure:
   },
   "query_language": "DAX",
   "query_templates": {
-    "fetch_budget": "EVALUATE SELECTCOLUMNS(FILTER(...), ...)",
-    "fetch_account_map": "EVALUATE SELECTCOLUMNS(...)"
+    "fetch_budget": "<REQUIRED - see QUERY TEMPLATES section>",
+    "fetch_account_map": "<REQUIRED - see QUERY TEMPLATES section>"
   },
   "sql_target": {
-    "table_name": "[Fakten Hauptbuch]",
-    "columns": ["main_account_id", "company_id", "accounting_date", ...]
+    "table_name": "[Fact Table Name]",
+    "columns": ["main_account_id", "company_id", "accounting_date", "..."]
   },
   "cashflow_config": {
-    "structure_table": "Dim Cashflow Struktur",
-    "position_column": "Position Geldflussrechnung"
+    "structure_table": "DimCashflow",
+    "position_column": "cf_position"
   },
   "customer_config": {
-    "customer_table": "Dim Kunde",
+    "customer_table": "DimCustomer",
     "customer_id_column": "customer_id",
-    "invoice_table": "Fakten Rechnungszeile"
+    "invoice_table": "FactInvoice"
   }
 }
 
+== QUERY TEMPLATES (CRITICAL) ==
+The scenario agent CANNOT function without working query templates. You MUST include these
+two templates in every model understanding. Templates use Python format placeholders.
+
+--- fetch_budget ---
+Purpose: Fetch all budget/baseline rows for a given year. The scenario agent uses this
+data to apply percentage or absolute adjustments.
+
+Required placeholders:
+  {year}          — integer, e.g. 2026
+  {month_filter}  — string, auto-built by the system. Will be empty string for full year,
+                    or a DAX/SQL filter clause for specific months. Your template must
+                    place this where an additional AND/&& clause can be appended.
+  {company_id}    — integer or string, company/entity filter value
+
+Required output column aliases (use these EXACT names):
+  "main_account_id"  — the account/GL ID (integer)
+  "accounting_date"  — the date (date or string YYYY-MM-DD)
+  "amount"           — the actual/budget amount (number)
+  "budget_amount"    — the budget amount (number, can be same as amount)
+  Plus any additional FK columns the fact table has: currency_id, cost_object_id,
+  cost_center_id, settlement_type_id, item_group_id, project_id, etc.
+
+DAX example (adapt table/column names to actual model):
+  EVALUATE SELECTCOLUMNS(
+    FILTER(
+      'Fakten Hauptbuch',
+      YEAR('Fakten Hauptbuch'[Buchungsdatum]) = {year}
+      && 'Fakten Hauptbuch'[Firma] = {company_id}
+      && 'Fakten Hauptbuch'[Wertart] = 2
+      {month_filter}
+    ),
+    "main_account_id", 'Fakten Hauptbuch'[Hauptkonto],
+    "accounting_date", 'Fakten Hauptbuch'[Buchungsdatum],
+    "amount", 'Fakten Hauptbuch'[Betrag],
+    "budget_amount", 'Fakten Hauptbuch'[Budgetbetrag],
+    "currency_id", 'Fakten Hauptbuch'[Währung],
+    "cost_object_id", 'Fakten Hauptbuch'[Kostenträger],
+    "cost_center_id", 'Fakten Hauptbuch'[Kostenstelle]
+  )
+
+SQL/DuckDB example:
+  SELECT account_id AS main_account_id, date AS accounting_date,
+         amount, budget_amount, currency_id, cost_center_id
+  FROM transactions
+  WHERE YEAR(date) = {year} AND company_id = {company_id}
+    AND value_type = 2 {month_filter}
+
+IMPORTANT for {month_filter} placement:
+- In DAX: place it after other FILTER conditions, so the system can append
+  "&& (MONTH('Table'[DateCol])=1 || MONTH('Table'[DateCol])=2)"
+- In SQL: place it after WHERE conditions, so the system can append
+  "AND EXTRACT(MONTH FROM date_col) IN (1, 2)"
+
+--- fetch_account_map ---
+Purpose: Fetch GL account metadata (names, groups, cashflow positions) for a set of
+account IDs. Used to enrich budget rows with human-readable names.
+
+Required placeholders:
+  {account_ids}  — comma-separated integers, e.g. "112, 114, 200, 300"
+
+Required output column aliases (use these EXACT names):
+  "id"           — the account ID (integer)
+  "nr"           — the account number/code (string, e.g. "320000")
+  "name"         — the account name (string)
+  "group"        — the reporting group (string, e.g. "Revenue", "COGS")
+  "cf_position"  — cashflow position ID (integer, 0 if N/A)
+
+DAX example:
+  EVALUATE SELECTCOLUMNS(
+    FILTER('Dim Hauptkonten',
+      'Dim Hauptkonten'[MainAccountID] IN {{{account_ids}}}
+    ),
+    "id", 'Dim Hauptkonten'[MainAccountID],
+    "nr", 'Dim Hauptkonten'[MainAccountNumber],
+    "name", 'Dim Hauptkonten'[MainAccountName],
+    "group", 'Dim Hauptkonten'[ReportingGroup],
+    "cf_position", 'Dim Hauptkonten'[CashflowPosition]
+  )
+
+NOTE on DAX IN syntax: The placeholder {account_ids} produces "112, 114, 200".
+In DAX, the IN operator needs curly braces: IN {112, 114, 200}. Since Python
+.format() uses {{ and }} for literal braces, write it as: IN {{{account_ids}}}
+This renders as IN {112, 114, 200} at runtime.
+
+SQL/DuckDB example:
+  SELECT id, account_number AS nr, name, reporting_group AS "group",
+         COALESCE(cf_position, 0) AS cf_position
+  FROM accounts WHERE id IN ({account_ids})
+
+--- Optional: query_customers_top ---
+If the model has a customer dimension with invoice/sales data, you can optionally include:
+  "query_customers_top": a query template returning top N customers by revenue
+  "query_customers_total": a query returning total revenue for a year
+
+== VALIDATION ==
+Before saving the understanding, you MUST:
+1. Build the fetch_budget template with actual table/column names from the schema
+2. Test it with run_test_query (use a concrete year, e.g. 2025 or 2026, and fill
+   {month_filter} with empty string, {company_id} with the actual company ID)
+3. Verify the result has columns: main_account_id, accounting_date, amount, budget_amount
+4. Build the fetch_account_map template and test it too (use a few real account IDs
+   from the fetch_budget results as the {account_ids} value)
+5. Verify the result has columns: id, nr, name, group
+6. Only save the understanding once BOTH templates return valid data
+
+If a query fails, debug it: check column names, table names, filter values.
+Use get_sample_data to inspect table contents. Fix and re-test until it works.
+
 == RULES ==
 - Always start with extract_schema before asking questions.
-- Be concise — don't overwhelm the user with questions. Ask 2-3 at a time.
-- When you have enough information, save the understanding (even if partial — status="draft").
+- Be concise — ask 2-3 questions at a time.
+- Save understanding when you have enough info (even partial — status="draft").
 - Mark status="confirmed" only when the user explicitly confirms.
 - If the user corrects something, update and re-save.
-- For combined PBI+Excel sources, note which tables come from which source.
-- Focus on what the scenario agent needs: fact table, accounts, amounts, dates, groups.
+- Focus on what the scenario agent needs: fact table, accounts, amounts, dates, groups, QUERY TEMPLATES.
+- **Never save without working query_templates.** The scenario agent is useless without them.
+
+== IMPORTANT: COMPACT JSON ==
+When calling save_understanding, you MUST keep the JSON compact to avoid output truncation:
+- Do NOT include whitespace/indentation in the JSON — output it as a single dense blob.
+- Only include sections you have real data for. Skip empty/unknown sections entirely.
+- For tables: only list the most important tables (fact tables, key dimensions). Skip hidden or auxiliary tables.
+- For important_columns: only list 3-5 key columns per table, not every column.
+- Keep descriptions very short (under 10 words each).
+- Prefer IDs and short names over long descriptions.
 """
 
 
@@ -224,9 +344,11 @@ class DiscoveryAgent:
     Lives in the Data Understanding tab of the UI.
     """
 
-    def __init__(self, source: DataSource, storage: SQLiteStorage):
+    def __init__(self, source: DataSource, storage: SQLiteStorage,
+                 model_id: str | None = None):
         self.source = source
         self.storage = storage
+        self.model_id = model_id
         self.ai = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         self.conv: list[dict] = []
         self._schema_cache: dict | None = None
@@ -319,14 +441,19 @@ class DiscoveryAgent:
             source_id = self.source.source_id()
             source_type = self.source.source_type()
             self.storage.save_model_understanding(
-                source_id, understanding_data, source_type
+                source_id, understanding_data, source_type,
+                model_id=self.model_id,
             )
             status = understanding_data.get("status", "draft")
             return f"Model understanding saved (status: {status})."
 
         elif name == "get_understanding":
-            source_id = self.source.source_id()
-            data = self.storage.load_model_understanding(source_id)
+            data = None
+            if self.model_id:
+                data = self.storage.load_model_understanding_by_model(self.model_id)
+            if not data:
+                source_id = self.source.source_id()
+                data = self.storage.load_model_understanding(source_id)
             if not data:
                 return "No model understanding saved yet."
             # Remove internal _meta before showing to agent
@@ -347,14 +474,97 @@ class DiscoveryAgent:
 
         self.conv.append({"role": "user", "content": msg})
 
+        truncation_retries = 0
+        max_retries = 2
+
         while True:
-            resp = self.ai.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=2048,
-                system=DISCOVERY_PROMPT,
-                tools=DISCOVERY_TOOLS,
-                messages=self.conv,
-            )
+            try:
+                resp = self.ai.messages.create(
+                    model=CLAUDE_MODEL,
+                    max_tokens=16384,
+                    system=DISCOVERY_PROMPT,
+                    tools=DISCOVERY_TOOLS,
+                    messages=self.conv,
+                )
+            except Exception as e:
+                print(f"[Discovery] API error: {e}")
+                # Remove the last user message so conversation stays valid
+                if self.conv and self.conv[-1]["role"] == "user":
+                    self.conv.pop()
+                raise
+
+            # Handle max_tokens truncation — response may contain incomplete
+            # tool_use blocks that would corrupt the conversation history.
+            if resp.stop_reason == "max_tokens":
+                truncation_retries += 1
+                print(f"[Discovery] Response truncated (max_tokens). "
+                      f"Retry {truncation_retries}/{max_retries}")
+
+                # Check if there are any tool_use blocks in the truncated response
+                has_tool_use = any(
+                    getattr(b, "type", None) == "tool_use" for b in resp.content
+                )
+
+                if has_tool_use and truncation_retries <= max_retries:
+                    # Don't append truncated tool_use — it can't be completed.
+                    # Keep only text blocks and ask the model to retry concisely.
+                    text_blocks = [b for b in resp.content
+                                   if getattr(b, "type", None) == "text"]
+                    if text_blocks:
+                        self.conv.append({
+                            "role": "assistant",
+                            "content": text_blocks,
+                        })
+                    self.conv.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response was truncated while calling a tool "
+                            "because the output was too long. "
+                            "Please try again with a much more compact approach:\n"
+                            "- Minimize your text explanation (1-2 sentences max)\n"
+                            "- In the JSON: no indentation, no optional/empty fields\n"
+                            "- Only include fields you have actual values for\n"
+                            "- Omit description fields if they are not essential"
+                        ),
+                    })
+                    continue
+
+                # Either no tool_use or retries exhausted — return what we have
+                text = "".join(
+                    b.text for b in resp.content if hasattr(b, "text")
+                )
+                if has_tool_use:
+                    # Retries exhausted with tool_use still truncating.
+                    # Drop the truncated response and tell the user.
+                    print("[Discovery] Retries exhausted — asking user to simplify.")
+                    self.conv.append({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text":
+                            "I'm having trouble saving the full model understanding "
+                            "in one go because the document is too large. "
+                            "Let me try saving it in a more compact format."}],
+                    })
+                    # Inject a system-level retry hint
+                    self.conv.append({
+                        "role": "user",
+                        "content": (
+                            "Please call save_understanding again but with a minimal "
+                            "JSON: only include model_name, status, tables (names and "
+                            "roles only), relationships, scenario_target, and "
+                            "account_structure. Skip all other sections. "
+                            "Use no whitespace in the JSON."
+                        ),
+                    })
+                    truncation_retries = 0  # Reset for the minimal retry
+                    continue
+
+                # Pure text truncation — return partial text
+                self.conv.append({"role": "assistant", "content": resp.content})
+                return (text or "(Response was empty)") + "\n\n*(Response was truncated)*"
+
+            # Reset truncation counter on successful response
+            truncation_retries = 0
+
             self.conv.append({"role": "assistant", "content": resp.content})
 
             if resp.stop_reason == "tool_use":
@@ -362,7 +572,11 @@ class DiscoveryAgent:
                 for block in resp.content:
                     if block.type == "tool_use":
                         print(f"[Discovery] {block.name}({json.dumps(block.input)[:100]})")
-                        result = await self._handle_tool(block.name, block.input)
+                        try:
+                            result = await self._handle_tool(block.name, block.input)
+                        except Exception as e:
+                            print(f"[Discovery] Tool error in {block.name}: {e}")
+                            result = f"Error executing {block.name}: {e}"
                         results.append({
                             "type":        "tool_result",
                             "tool_use_id": block.id,
@@ -382,9 +596,13 @@ class DiscoveryAgent:
         print("[Discovery] Conversation reset.")
 
     def get_model_understanding(self) -> ModelUnderstanding | None:
-        """Load the current model understanding for the connected source."""
-        source_id = self.source.source_id()
-        data = self.storage.load_model_understanding(source_id)
+        """Load the current model understanding (prefers model_id, then source_id)."""
+        data = None
+        if self.model_id:
+            data = self.storage.load_model_understanding_by_model(self.model_id)
+        if not data:
+            source_id = self.source.source_id()
+            data = self.storage.load_model_understanding(source_id)
         if not data:
             return None
         # Remove internal metadata

@@ -7,9 +7,7 @@ Provides:
 
 The agent is model-agnostic: it receives a ModelUnderstanding document and
 a DataSource, then generates its system prompt and tools dynamically.
-
-For backward compatibility, if no ModelUnderstanding is provided the agent
-falls back to the legacy hardcoded FINANCE prompt (via _build_legacy_prompt).
+A ModelUnderstanding is required — run the Discovery Agent first.
 """
 
 import os
@@ -30,16 +28,13 @@ from scenario import build_scenario, make_sql, save_sql
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def data_summary(rows: list[dict],
-                 mu: ModelUnderstanding | None = None) -> str:
+                 mu: ModelUnderstanding) -> str:
     """
     Return a rich text summary of loaded budget rows.
 
     Account names, GL numbers, and reporting groups come from the enriched row
     fields added by fetch_budget (live from the data source) — no static map
-    needed here.
-
-    If a ModelUnderstanding is provided, uses its pl_groups to classify
-    P&L vs BS accounts. Otherwise falls back to the legacy hardcoded groups.
+    needed here. Uses ModelUnderstanding's pl_groups to classify P&L vs BS accounts.
     """
     months:      set[str]         = set()
     acct_totals: dict[int, float] = {}
@@ -56,32 +51,16 @@ def data_summary(rows: list[dict],
                 "grp":  r.get("account_grp",  "—"),
             }
 
-    # Determine revenue/cogs account sets
-    if mu is not None:
-        rev_accs  = mu.revenue_accounts()
-        cogs_accs = mu.cogs_accounts()
-    else:
-        # Legacy fallback
-        from config import REVENUE_ACCS, COGS_ACCS
-        rev_accs  = REVENUE_ACCS
-        cogs_accs = COGS_ACCS
+    # Determine revenue/cogs account sets from ModelUnderstanding
+    rev_accs  = mu.revenue_accounts()
+    cogs_accs = mu.cogs_accounts()
 
     rev   = sum(v for acc, v in acct_totals.items() if acc in rev_accs)
     cogs  = sum(v for acc, v in acct_totals.items() if acc in cogs_accs)
     ms    = sorted(months)
 
     # Separate P&L vs BS accounts by group
-    if mu is not None:
-        pl_groups = set(mu.pl_groups)
-    else:
-        # Legacy hardcoded
-        pl_groups = {
-            "Umsatz", "Warenaufwand", "Bezugskosten", "Fakturierte Nebenerlöse",
-            "Erlösminderungen", "Personalaufwand", "Raumaufwand", "Energieaufwand",
-            "Übriger Betriebsaufwand", "Marketing", "IT Aufwand",
-            "Betriebsaufwand Logistik", "Abschreibungen", "Finanzerfolg",
-            "Betriebsfremder Erfolg", "Ausserordentlicher Erfolg", "Steueraufwand",
-        }
+    pl_groups = set(mu.pl_groups)
 
     pl_accts = {a for a in acct_totals if acct_meta[a]["grp"] in pl_groups}
     bs_accts = {a for a in acct_totals if a not in pl_accts}
@@ -177,7 +156,12 @@ class Agent:
     """
 
     def __init__(self, source: DataSource,
-                 mu: ModelUnderstanding | None = None):
+                 mu: ModelUnderstanding):
+        if mu is None:
+            raise ValueError(
+                "ModelUnderstanding is required. "
+                "Run the Discovery Agent first to build a model understanding."
+            )
         self.source            = source
         self.mu                = mu
         self.ai                = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -186,13 +170,9 @@ class Agent:
         self.staged: list[dict] = []  # staged adjustment groups [{description, adjustments}]
         self.next_scenario_id  = 3    # increments with each applied scenario
 
-        # Build prompt and tools from ModelUnderstanding (or legacy fallback)
-        if mu is not None:
-            self._system_prompt = PromptBuilder.build(mu)
-            self._tools = PromptBuilder.build_tools(mu)
-        else:
-            self._system_prompt = _build_legacy_prompt()
-            self._tools = _build_legacy_tools()
+        # Build prompt and tools dynamically from ModelUnderstanding
+        self._system_prompt = PromptBuilder.build(mu)
+        self._tools = PromptBuilder.build_tools(mu)
 
     # ── Staged adjustments ────────────────────────────────────────────────────
 
@@ -224,19 +204,9 @@ class Agent:
             year   = inp.get("year", 2026)
             months = inp.get("months")
 
-            if self.mu is not None:
-                # Model-agnostic path via queries.py
-                rows = await fetch_budget_generic(
-                    self.source, self.mu, year, months
-                )
-            else:
-                # Legacy fallback via dax.py
-                from dax import fetch_budget
-                from pbi_client import PBIClient
-                pbi = self.source if isinstance(self.source, PBIClient) else None
-                if pbi is None and hasattr(self.source, '_pbi'):
-                    pbi = self.source._pbi
-                rows = await fetch_budget(pbi, year, months)
+            rows = await fetch_budget_generic(
+                self.source, self.mu, year, months
+            )
 
             if not rows:
                 return "Query returned no rows. Check the connection and filters."
@@ -250,12 +220,12 @@ class Agent:
         return f"Unknown tool: {name}"
 
     async def _handle_query_customers(self, inp: dict) -> str:
-        """Handle query_customers tool — works with ModelUnderstanding or legacy DAX."""
+        """Handle query_customers tool using ModelUnderstanding query templates."""
         year   = inp.get("year", 2025)
         top_n  = inp.get("top_n", 10)
         search = inp.get("search_name", "").strip()
 
-        if self.mu is not None and self.mu.has_customer_dimension:
+        if self.mu.has_customer_dimension:
             # Use customer query templates from ModelUnderstanding
             template = self.mu.get_query_template("query_customers_top")
             if not template:
@@ -300,112 +270,7 @@ class Agent:
 
             return "\n".join(lines)
 
-        else:
-            # Legacy hardcoded DAX path
-            return await self._handle_query_customers_legacy(inp)
-
-    async def _handle_query_customers_legacy(self, inp: dict) -> str:
-        """Legacy DAX-based customer query for the FINANCE model."""
-        from config import COMPANY_ID
-        year   = inp.get("year", 2025)
-        top_n  = inp.get("top_n", 10)
-        search = inp.get("search_name", "").strip()
-
-        dax_top = f"""EVALUATE
-TOPN({top_n},
-  SUMMARIZECOLUMNS(
-    'Fakten Rechnungszeile'[customer_id],
-    FILTER('Fakten Rechnungszeile',
-      'Fakten Rechnungszeile'[company_id]    = {COMPANY_ID}
-      && 'Fakten Rechnungszeile'[value_type_id] = 1
-      && YEAR('Fakten Rechnungszeile'[invoice_date]) = {year}
-      && NOT ISBLANK('Fakten Rechnungszeile'[customer_id])
-    ),
-    "revenue", SUM('Fakten Rechnungszeile'[actual_revenue])
-  ),
-  [revenue], DESC
-)
-ORDER BY [revenue] DESC"""
-        resp1    = await self.source.query(dax_top)
-        top_rows = resp1.get("data", {}).get("rows", [])
-        if not top_rows:
-            return f"No customer revenue data found for {year}."
-
-        dax_total = f"""EVALUATE
-ROW("total",
-  CALCULATE(
-    SUM('Fakten Rechnungszeile'[actual_revenue]),
-    'Fakten Rechnungszeile'[company_id]    = {COMPANY_ID},
-    'Fakten Rechnungszeile'[value_type_id] = 1,
-    YEAR('Fakten Rechnungszeile'[invoice_date]) = {year}
-  )
-)"""
-        resp2     = await self.source.query(dax_total)
-        total_rev = float(
-            (resp2.get("data", {}).get("rows", [{}])[0]).get("[total]", 1) or 1
-        )
-
-        cust_ids  = [int(r.get("Fakten Rechnungszeile[customer_id]", 0)) for r in top_rows]
-        ids_str   = ", ".join(str(i) for i in cust_ids)
-        dax_names = f"""EVALUATE
-SELECTCOLUMNS(
-  FILTER('Dim Kunde', 'Dim Kunde'[customer_id] IN {{{ids_str}}}),
-  "id",    'Dim Kunde'[customer_id],
-  "name",  'Dim Kunde'[Kundenname],
-  "alias", 'Dim Kunde'[Kundenname Alias]
-)"""
-        resp3    = await self.source.query(dax_names)
-        name_map = {
-            int(r["[id]"]): (r["[name]"], r["[alias]"])
-            for r in resp3.get("data", {}).get("rows", [])
-        }
-
-        search_result = []
-        if search:
-            dax_search = f"""EVALUATE
-SELECTCOLUMNS(
-  FILTER('Dim Kunde',
-    SEARCH("{search}", 'Dim Kunde'[Kundenname], 1, 0) > 0
-    || SEARCH("{search}", 'Dim Kunde'[Kundenname Alias], 1, 0) > 0
-  ),
-  "id",    'Dim Kunde'[customer_id],
-  "name",  'Dim Kunde'[Kundenname],
-  "alias", 'Dim Kunde'[Kundenname Alias]
-)"""
-            resp4 = await self.source.query(dax_search)
-            for r in resp4.get("data", {}).get("rows", []):
-                search_result.append(
-                    f"  • customer_id={int(r['[id]'])} — {r['[name]']} ({r['[alias]']})"
-                )
-
-        lines = [f"Top {top_n} customers by actual revenue {year} "
-                 f"(total company: CHF {total_rev:,.0f}):", ""]
-        lines.append(f"  {'Rank':<5} {'customer_id':<13} {'Revenue CHF':>14} {'Share':>7}  Name")
-        lines.append("  " + "─" * 70)
-        for rank, r in enumerate(top_rows, 1):
-            cid         = int(r.get("Fakten Rechnungszeile[customer_id]", 0))
-            rev         = float(r.get("[revenue]", 0))
-            share       = rev / total_rev * 100
-            name, alias = name_map.get(cid, ("—", "—"))
-            lines.append(
-                f"  {rank:<5} {cid:<13} {rev:>14,.0f} {share:>6.1f}%  {name} ({alias})"
-            )
-
-        lines += [
-            "",
-            "NOTE: Budget rows in Fakten Rechnungszeile have no customer_id "
-            "(aggregated at cost_object level).",
-            "To model a customer revenue change, use their revenue SHARE to scale "
-            "the matching GL accounts",
-            "in Fakten Hauptbuch. For example: if customer X = 8.5% of revenue, "
-            "reducing them by 25%",
-            "means a -2.1% adjustment on total revenue GL accounts "
-            "(8.5% × 25% = 2.125%).",
-        ]
-        if search_result:
-            lines += ["", f"Search results for '{search}':"] + search_result
-
-        return "\n".join(lines)
+        return "No customer dimension configured in model understanding."
 
     # ── Main chat loop ────────────────────────────────────────────────────────
 
@@ -435,7 +300,11 @@ SELECTCOLUMNS(
                 for block in resp.content:
                     if block.type == "tool_use":
                         print(f"[Tool] {block.name}({block.input})")
-                        result = await self._handle_tool(block.name, block.input)
+                        try:
+                            result = await self._handle_tool(block.name, block.input)
+                        except Exception as e:
+                            print(f"[Tool] Error in {block.name}: {e}")
+                            result = f"Error executing {block.name}: {e}"
                         results.append({
                             "type":        "tool_result",
                             "tool_use_id": block.id,
@@ -476,19 +345,14 @@ SELECTCOLUMNS(
                 print(f"[SQL] Applying {len(all_adjs)} adjustment(s) from "
                       f"{len(self.staged)} group(s) as scenario_id={scenario_id} ...")
 
-                # Get model-specific params for build_scenario and make_sql
-                rev_accs = self.mu.revenue_accounts() if self.mu else None
-                cogs_accs = self.mu.cogs_accounts() if self.mu else None
-                target_table = None
-                company_id = None
-                output_dir = None
-
-                if self.mu:
-                    st = self.mu.sql_target
-                    target_table = st.get("table_name") if st else None
-                    company_id = self.mu.company_id
-                    from config import OUTPUT_DIR
-                    output_dir = OUTPUT_DIR
+                # Get model-specific params from ModelUnderstanding
+                rev_accs = self.mu.revenue_accounts()
+                cogs_accs = self.mu.cogs_accounts()
+                st = self.mu.sql_target
+                target_table = st.get("table_name") if st else None
+                company_id = self.mu.company_id
+                from config import OUTPUT_DIR
+                output_dir = OUTPUT_DIR
 
                 sc   = build_scenario(self.rows, all_adjs,
                                       revenue_accs=rev_accs,
@@ -521,164 +385,3 @@ SELECTCOLUMNS(
         self.conv   = []
         self.staged = []
         print("[Agent] Conversation and staging area reset.")
-
-
-# ── Legacy fallback prompt & tools ────────────────────────────────────────────
-# These are used when no ModelUnderstanding is available (backward compat
-# with the original FINANCE-specific setup).
-
-def _build_legacy_prompt() -> str:
-    """Return the original hardcoded FINANCE system prompt."""
-    return """You are a financial scenario specialist for the FINANCE Power BI model (Hans Kohler AG).
-
-== DATA MODEL ==
-Fakten Hauptbuch (GL ledger): The table where scenarios are written.
-  run_dax_query loads TWO data sets into one unified baseline:
-    1. P&L budget (value_type_id=2) for the requested year
-    2. BS/CF actuals (value_type_id=1) from the PRIOR year, aggregated by account × month
-       — these are accounts that have no budget rows (e.g. receivables, payables, inventory,
-       fixed assets, cash). Their prior-year actuals serve as the scenario baseline.
-  All accounts appear in the same account breakdown and can be adjusted the same way.
-  Each row has: account (ID + GL-Nr. + name), date, amount, budget_amount, cost_object (ID + name).
-  The account_grp (Reporting H2) tells you which reporting group an account belongs to.
-Fakten Rechnungszeile (Invoice lines): Actual sales at customer × item level.
-  Budget rows here have customer_id=NULL — aggregated, not per-customer.
-Dim Kunde: Customer master. Columns: customer_id (int), Kundenname, Kundenname Alias.
-
-== GL ACCOUNTS ==
-Always call run_dax_query before staging adjustments — the result includes a full
-account breakdown with account_nr (D365 GL number), account_name, and account_grp
-(reporting group) pulled live from the semantic model. Use those names when talking
-to the user and those IDs when writing adjustment blocks.
-
-Revenue accounts: account_group="revenue" targets all revenue IDs.
-COGS accounts:    account_group="cogs"    targets all COGS IDs.
-Specific subset:  account_group="112,114" (comma-separated IDs).
-Reporting group:  list the individual IDs that belong to it, e.g. "122,123,124".
-
-== CUSTOMER SCENARIOS ==
-Since budget invoice lines have no customer_id, customer scenarios are modelled via GL accounts:
-1. Call query_customers → get customer's actual revenue share % from prior year actuals
-2. Calculate net GL impact: customer_share% × requested_change% = GL_adjustment%
-   Example: customer is 8.5% of revenue, reduce by 25% → GL adjustment = -(8.5% × 25%) = -2.125%
-3. Call run_dax_query to load GL budget baseline
-4. Apply calculated GL_adjustment% to revenue accounts
-
-Always show the user the maths before staging.
-
-== STAGING WORKFLOW ==
-Adjustments are STAGED across multiple turns. SQL is only generated when the user
-explicitly asks to "generate", "apply", or "create" the scenario (with a name).
-
-Step 1 — STAGE adjustments (one or more turns):
-- For customer-based requests  → call query_customers first, then run_dax_query
-- For account/group requests   → call run_dax_query directly
-- Once confirmed, output a ```stage block (see format below)
-- After staging, summarise what was staged and list ALL staged adjustments so far
-  (so the user can keep building before generating SQL)
-
-Step 2 — GENERATE SQL (only when user provides a scenario name and asks to generate):
-- Output a ```apply block (see format below)
-- The server will collect ALL staged adjustments, apply them to the budget baseline,
-  and write a SQL INSERT file.
-
-== STAGE FORMAT ==
-Output EXACTLY this block to accumulate one adjustment group (no extra text inside it):
-```stage
-{
-  "description": "Brief human-readable description shown in the sidebar",
-  "adjustments": [
-    {"months": [2], "account_group": "revenue", "pct_change": 2.0}
-  ]
-}
-```
-
-Each adjustment uses EITHER pct_change OR abs_change (never both):
-  Percentage: {"account_group": "revenue", "pct_change": 5.0}
-  Absolute:   {"account_group": "345", "abs_change": 50000}
-
-== APPLY FORMAT ==
-Output EXACTLY this block to trigger SQL generation for ALL staged adjustments:
-```apply
-{
-  "label": "short_name_no_spaces",
-  "description": "Human-readable one-liner describing the full scenario"
-}
-```
-
-Rules:
-- months: 1-12 list, or omit for full year.
-- account_group: "revenue", "cogs", "all", or comma-separated account IDs e.g. "112,114".
-- Use pct_change for percentage adjustments, abs_change for absolute CHF amounts.
-- IMPORTANT: When the user provides an absolute value (e.g. "add CHF 50,000 to receivables"),
-  use abs_change directly with that value. Do NOT convert it to a percentage. Do NOT
-  distribute or weight it yourself — the engine handles even distribution automatically.
-- pct_change: always the BUSINESS direction — never flip the sign because a GL account
-  happens to be stored as a negative number.
-
-  COGS accounts are stored as NEGATIVE amounts (e.g., -80 000). The formula
-  amount × (1 + pct/100) handles this correctly without any sign adjustment:
-
-    User says "increase costs 5%"  → pct_change = +5  → -80 000 × 1.05 = -84 000  ✓ (more costly)
-    User says "decrease costs 5%"  → pct_change = -5  → -80 000 × 0.95 = -76 000  ✓ (less costly)
-
-  DO NOT stage a negative pct_change just because the GL value is negative.
-  A positive pct_change always makes costs larger in absolute terms.
-
-- abs_change: the total CHF amount to add (positive) or subtract (negative).
-  The engine distributes this evenly across all matching rows.
-  Example: abs_change=120000 on an account with 12 monthly rows → +10,000 per month.
-
-- Never output both a ```stage and ```apply block in the same message.
-- Never mention caches, files, sessions, or backends.
-
-== CASHFLOW & BALANCE SHEET ==
-The loaded data includes BOTH P&L budget accounts AND BS/CF accounts (based on prior-
-year actuals). You can adjust any account visible in the run_dax_query results — P&L
-accounts like revenue and costs, AND balance sheet accounts like receivables, payables,
-inventory, fixed assets, cash, etc. Use their account IDs the same way.
-
-The UI automatically computes a cashflow statement impact from ALL staged adjustments:
-- Each GL account is mapped to a cashflow position via Dim Hauptkonto[Position Geldflussrechnung]
-  → Dim Cashflow Struktur[GruppeSort].
-- When the user clicks "Preview Impact", the preview shows TWO tabs:
-  1. P&L tab — account-level delta table and waterfall chart
-  2. Cashflow tab — derived cashflow statement (Operating / Investing / Financing / Net)
-- Tell the user to check the Cashflow tab in Preview Impact to see the cash effect."""
-
-
-def _build_legacy_tools() -> list[dict]:
-    """Return the original hardcoded tool definitions."""
-    return [
-        {
-            "name": "run_dax_query",
-            "description": "Fetch budget data from Fakten Hauptbuch (GL). Returns a summary; data stored internally.",
-            "input_schema": {
-                "type": "object",
-                "required": ["year"],
-                "properties": {
-                    "year":   {"type": "integer", "description": "Fiscal year e.g. 2026"},
-                    "months": {"type": "array", "items": {"type": "integer"},
-                               "description": "Specific months 1-12. Omit for full year."},
-                },
-            },
-        },
-        {
-            "name": "query_customers",
-            "description": (
-                "Look up customers and their actual revenue share from Fakten Rechnungszeile. "
-                "Use this when the user mentions a customer name, 'biggest customer', 'top N customers', "
-                "or any customer-specific scenario. Returns customer IDs, names, revenue totals, and "
-                "their % share of total company revenue — which can then be used to calculate the "
-                "proportional impact on GL budget rows."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "year":        {"type": "integer", "description": "Year for actuals lookup (default 2025)"},
-                    "top_n":       {"type": "integer", "description": "Return top N customers by revenue (default 10)"},
-                    "search_name": {"type": "string",  "description": "Optional: search by customer name substring"},
-                },
-            },
-        },
-    ]

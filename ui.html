@@ -1102,6 +1102,82 @@
     box-shadow: var(--shadow); white-space: nowrap;
   }
   .toast.show { opacity: 1; }
+
+  /* ══════════════════════════════════════
+     ACTIVE MODEL NAME IN HEADER
+  ══════════════════════════════════════ */
+  .active-model-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: rgba(255,255,255,0.55);
+    white-space: nowrap; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .active-model-label .aml-icon {
+    font-size: 12px; flex-shrink: 0; opacity: 0.5;
+  }
+  .active-model-label .aml-name {
+    color: rgba(255,255,255,0.80); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ══════════════════════════════════════
+     MODELS LIST MODAL
+  ══════════════════════════════════════ */
+  .models-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .models-item {
+    padding: 12px 14px;
+    background: var(--bg); border: 1.5px solid var(--border);
+    border-radius: var(--r); transition: all 0.14s;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .models-item:hover { border-color: var(--accent); background: var(--accent-xl); }
+  .models-item-info { flex: 1; min-width: 0; }
+  .models-item-name { font-size: 13px; font-weight: 600; color: var(--text); }
+  .models-item-meta {
+    font-size: 11px; color: var(--text2); margin-top: 2px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .models-item-meta span { white-space: nowrap; }
+  .models-item-badge {
+    font-size: 9.5px; font-weight: 700; padding: 2px 7px;
+    border-radius: 10px; letter-spacing: 0.03em; text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .models-item-badge.draft { background: var(--amber-lt); color: var(--amber); border: 1px solid var(--amber-bd); }
+  .models-item-badge.confirmed { background: var(--green-lt); color: var(--green); border: 1px solid rgba(39,168,130,0.22); }
+  .models-item-badge.none { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+  .models-item-actions { display: flex; gap: 5px; flex-shrink: 0; }
+
+  /* Model match dialog */
+  .match-dialog {
+    text-align: center; padding: 10px 0;
+  }
+  .match-dialog .match-name {
+    font-size: 15px; font-weight: 700; color: var(--accent-dk);
+    margin: 8px 0 4px;
+  }
+  .match-dialog .match-sub {
+    font-size: 12px; color: var(--text2); margin-bottom: 16px;
+  }
+  .match-dialog .match-actions {
+    display: flex; gap: 8px; justify-content: center;
+  }
+
+  /* New model name input inside modal */
+  .new-model-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    border-radius: var(--rs);
+    color: var(--text); font-family: 'Inter', sans-serif;
+    font-size: 13px; padding: 8px 12px;
+    outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .new-model-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(106,187,217,0.13);
+  }
+  .new-model-input::placeholder { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -1128,7 +1204,13 @@
     <span id="model-understanding-text">No Model</span>
   </div>
 
+  <div class="active-model-label" id="active-model-label" style="display:none">
+    <span class="aml-icon">&#9638;</span>
+    <span class="aml-name" id="active-model-name"></span>
+  </div>
+
   <div class="header-actions">
+    <button class="h-btn" onclick="openModelsModal()" title="Manage saved models">&#9776; Models</button>
     <button class="h-btn" onclick="resetChat()">&#8634; Reset</button>
     <div class="ds-dropdown" id="ds-dropdown">
       <button class="h-btn accent" id="connect-btn" onclick="toggleDataSourceMenu()">&#8853; Data Source</button>
@@ -1354,6 +1436,65 @@
   </div>
 </div>
 
+<!-- ════ MODELS LIST MODAL ════ -->
+<div class="modal-overlay" id="models-modal">
+  <div class="modal" style="width:560px; max-height:72vh">
+    <div class="modal-header">
+      <span class="modal-title" style="color:var(--accent-dk)">Saved Models</span>
+      <button class="m-btn primary" onclick="promptNewModel()">&#43; New Model</button>
+      <button class="m-btn" onclick="closeModelsModal()">&#10005; Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-subtitle">Select a model to activate, or create a new one.</div>
+      <div class="models-list" id="models-list-container">
+        <div class="picker-empty">Loading...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════ MODEL MATCH DIALOG ════ -->
+<div class="modal-overlay" id="model-match-modal">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <span class="modal-title">Existing Model Found</span>
+    </div>
+    <div class="modal-body">
+      <div class="match-dialog">
+        <div>A saved model matches this data source:</div>
+        <div class="match-name" id="match-model-name"></div>
+        <div class="match-sub" id="match-model-sub"></div>
+        <div class="match-actions">
+          <button class="m-btn primary" id="match-use-btn" onclick="useMatchedModel()">Yes, Use It</button>
+          <button class="m-btn" id="match-new-btn" onclick="createNewFromMatch()">Create New</button>
+          <button class="m-btn" onclick="closeMatchModal()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════ NEW MODEL NAME DIALOG ════ -->
+<div class="modal-overlay" id="new-model-modal">
+  <div class="modal" style="width:400px">
+    <div class="modal-header">
+      <span class="modal-title">New Model</span>
+      <button class="m-btn" onclick="closeNewModelModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-subtitle">Enter a name for the new model.</div>
+      <input type="text" class="new-model-input" id="new-model-name-input"
+             placeholder="e.g. Budget 2026, Forecast Q1..."
+             maxlength="80"
+             onkeydown="if(event.key==='Enter') confirmNewModel()">
+      <div class="picker-actions">
+        <button class="m-btn" onclick="closeNewModelModal()">Cancel</button>
+        <button class="m-btn primary" onclick="confirmNewModel()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1362,6 +1503,10 @@ let currentSQL = "";
 let selectedInstance = null;
 let _modelStatus = "none";  // "none" | "draft" | "confirmed"
 let _activeMainTab = "discovery";
+let _currentModelId = null;
+let _currentModelName = null;
+let _matchedModelData = null;   // temp store during connect flow
+let _newModelCallback = null;   // callback after new model name is entered
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
@@ -1369,6 +1514,12 @@ async function init() {
   if (s) {
     setStatus(s.connected, s.message);
     if (s.agent_ready) setStatus(s.connected, s.connected ? "Connected to Power BI" : "Agent ready -- click Data Source");
+    // Restore active model from status
+    if (s.model_id) {
+      _currentModelId = s.model_id;
+      // Fetch model details to get the name
+      fetchActiveModelName(s.model_id);
+    }
   }
   addSystemMsg("dataBobCFO ready. Click Data Source to connect a Power BI model or upload Excel files.");
   addDiscoverySystemMsg("Discovery agent ready. Connect a data source, then click Start Discovery to analyze your model.");
@@ -1443,7 +1594,12 @@ document.getElementById("excel-file-input").addEventListener("change", async fun
     addSystemMsg(r.ok
       ? `Excel files uploaded successfully. ${r.message || ""}`
       : `Excel upload failed: ${r.message || "Unknown error"}`);
-    if (r.ok) refreshModelStatus();
+    if (r.ok) {
+      refreshModelStatus();
+      // Derive a default model name from the first uploaded file
+      const firstName = files.length ? files[0].name.replace(/\.xlsx?$/i, "") : "Excel Model";
+      handleConnectModelResponse(r, firstName);
+    }
   } catch(e) {
     connectBtn.disabled = false;
     connectBtn.textContent = "⊕ Data Source";
@@ -1609,7 +1765,10 @@ async function connectSelected() {
   addSystemMsg(r.ok
     ? `Connected to "${selectedInstance.display_name}" on port ${selectedInstance.port}`
     : `Connection failed: ${r.message}`);
-  if (r.ok) refreshModelStatus();
+  if (r.ok) {
+    refreshModelStatus();
+    handleConnectModelResponse(r, selectedInstance.display_name);
+  }
 }
 
 function closePicker() {
@@ -2413,6 +2572,278 @@ function closePreview() {
 function closePreviewOverlay(e) {
   if (e.target === document.getElementById("preview-modal")) closePreview();
 }
+
+// ── Model Management ──────────────────────────────────────────────────────────
+
+/** Fetch model name by ID and update the header display. */
+async function fetchActiveModelName(modelId) {
+  try {
+    const r = await fetch(`/api/models/${modelId}`).then(res => res.json());
+    if (r.ok && r.model) {
+      _currentModelName = r.model.name;
+      updateActiveModelDisplay();
+    }
+  } catch(e) { /* silently ignore */ }
+}
+
+/** Update the active model name display in the header. */
+function updateActiveModelDisplay() {
+  const label = document.getElementById("active-model-label");
+  const nameEl = document.getElementById("active-model-name");
+  if (_currentModelId && _currentModelName) {
+    nameEl.textContent = _currentModelName;
+    label.style.display = "flex";
+  } else {
+    label.style.display = "none";
+  }
+}
+
+/** Set current model state and update UI. */
+function setCurrentModel(id, name) {
+  _currentModelId = id;
+  _currentModelName = name;
+  updateActiveModelDisplay();
+}
+
+/** Open the models list modal. */
+async function openModelsModal() {
+  document.getElementById("models-modal").classList.add("open");
+  await refreshModelsList();
+}
+
+function closeModelsModal() {
+  document.getElementById("models-modal").classList.remove("open");
+}
+
+/** Fetch and render the models list. */
+async function refreshModelsList() {
+  const container = document.getElementById("models-list-container");
+  container.innerHTML = '<div class="picker-empty">Loading...</div>';
+
+  let res;
+  try {
+    res = await fetch("/api/models").then(r => r.json());
+  } catch(e) {
+    container.innerHTML = `<div class="picker-empty">Could not load models.<br>${escHtml(String(e))}</div>`;
+    return;
+  }
+
+  const models = (res.models || []);
+  if (!models.length) {
+    container.innerHTML = `<div class="picker-empty">No saved models yet.<br>Connect a data source or click <strong>+ New Model</strong>.</div>`;
+    return;
+  }
+
+  container.innerHTML = models.map(m => {
+    const statusCls = m.understanding_status === "confirmed" ? "confirmed"
+                    : m.understanding_status === "draft" ? "draft" : "none";
+    const statusTxt = m.understanding_status === "confirmed" ? "Confirmed"
+                    : m.understanding_status === "draft" ? "Draft" : "No Understanding";
+    const sourceIcon = m.source_type === "excel" ? "&#8593;" : "&#8853;";
+    const sourceLabel = m.source_type === "excel" ? "Excel" : m.source_type === "pbi" ? "Power BI" : (m.source_type || "Unknown");
+    const lastAccessed = m.last_accessed_at
+      ? new Date(m.last_accessed_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+      : "Never";
+    const isActive = _currentModelId && _currentModelId === m.id;
+    const activeBorder = isActive ? "border-color:var(--accent);background:var(--accent-xl);" : "";
+    return `<div class="models-item" style="${activeBorder}">
+      <div class="models-item-info">
+        <div class="models-item-name">${escHtml(m.name)}${isActive ? ' <span style="font-size:10px;color:var(--accent);font-weight:400;">(active)</span>' : ''}</div>
+        <div class="models-item-meta">
+          <span>${sourceIcon} ${sourceLabel}</span>
+          <span>Last: ${lastAccessed}</span>
+        </div>
+      </div>
+      <span class="models-item-badge ${statusCls}">${statusTxt}</span>
+      <div class="models-item-actions">
+        <button class="m-btn primary" onclick="activateModel('${m.id}')" ${isActive ? 'disabled' : ''}>Open</button>
+        <button class="m-btn" style="color:var(--red);border-color:rgba(208,64,96,0.3);"
+                onclick="deleteModel('${m.id}', '${escHtml(m.name).replace(/'/g, "\\'")}')">&#10005;</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/** Activate (open) a saved model. */
+async function activateModel(modelId) {
+  toast("Activating model...");
+  try {
+    const r = await fetch(`/api/models/${modelId}/activate`, { method: "POST" }).then(res => res.json());
+    if (r.ok) {
+      setCurrentModel(modelId, r.model ? r.model.name : null);
+      if (!_currentModelName && r.model) _currentModelName = r.model.name;
+      updateActiveModelDisplay();
+      setStatus(true, `Model "${_currentModelName || modelId}" activated`);
+      addSystemMsg(`Model "${_currentModelName || modelId}" activated.` +
+        (r.has_understanding ? " Understanding loaded." : " No understanding yet -- go to Data Understanding."));
+      refreshModelStatus();
+      closeModelsModal();
+      toast("Model activated");
+    } else {
+      toast("Failed to activate: " + (r.message || r.error || "unknown"));
+    }
+  } catch(e) {
+    toast("Error: " + e);
+  }
+}
+
+/** Delete a model with confirmation. */
+async function deleteModel(modelId, modelName) {
+  if (!confirm(`Delete model "${modelName}"? This cannot be undone.`)) return;
+  try {
+    const r = await fetch(`/api/models/${modelId}`, { method: "DELETE" }).then(res => res.json());
+    if (r.ok) {
+      toast(`Model "${modelName}" deleted`);
+      if (_currentModelId === modelId) {
+        setCurrentModel(null, null);
+      }
+      await refreshModelsList();
+    } else {
+      toast("Delete failed: " + (r.message || r.error || "unknown"));
+    }
+  } catch(e) {
+    toast("Error: " + e);
+  }
+}
+
+/** Show the new model name prompt. Optional callback receives {ok, model_id}. */
+function promptNewModel(callback, defaultName) {
+  _newModelCallback = callback || null;
+  const input = document.getElementById("new-model-name-input");
+  input.value = defaultName || "";
+  document.getElementById("new-model-modal").classList.add("open");
+  setTimeout(() => input.focus(), 100);
+}
+
+function closeNewModelModal() {
+  document.getElementById("new-model-modal").classList.remove("open");
+  _newModelCallback = null;
+}
+
+async function confirmNewModel() {
+  const input = document.getElementById("new-model-name-input");
+  const name = input.value.trim();
+  if (!name) { toast("Enter a model name"); input.focus(); return; }
+
+  try {
+    const r = await fetch("/api/models", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name })
+    }).then(res => res.json());
+
+    if (r.ok) {
+      closeNewModelModal();
+      toast(`Model "${name}" created`);
+      const cb = _newModelCallback;
+      _newModelCallback = null;
+      if (cb) {
+        cb({ ok: true, model_id: r.model_id, name });
+      } else {
+        // Auto-activate
+        await activateModel(r.model_id);
+      }
+    } else {
+      toast("Create failed: " + (r.message || r.error || "unknown"));
+    }
+  } catch(e) {
+    toast("Error: " + e);
+  }
+}
+
+// ── Model Match Dialog (connect flow) ─────────────────────────────────────────
+
+function showMatchDialog(matchedModel) {
+  _matchedModelData = matchedModel;
+  document.getElementById("match-model-name").textContent = matchedModel.name;
+  const lastAccessed = matchedModel.last_accessed_at
+    ? "Last accessed: " + new Date(matchedModel.last_accessed_at).toLocaleDateString()
+    : "";
+  document.getElementById("match-model-sub").textContent = lastAccessed;
+  document.getElementById("model-match-modal").classList.add("open");
+}
+
+function closeMatchModal() {
+  document.getElementById("model-match-modal").classList.remove("open");
+  _matchedModelData = null;
+}
+
+function useMatchedModel() {
+  if (!_matchedModelData) return;
+  const m = _matchedModelData;
+  setCurrentModel(m.id, m.name);
+  closeMatchModal();
+  toast(`Using model "${m.name}"`);
+  addSystemMsg(`Using existing model "${m.name}".`);
+  refreshModelStatus();
+}
+
+function createNewFromMatch() {
+  closeMatchModal();
+  promptNewModel(async (result) => {
+    if (result.ok && result.model_id) {
+      // Link current source to the new model
+      try {
+        await fetch(`/api/models/${result.model_id}/link-source`, { method: "POST" });
+      } catch(e) { /* ignore */ }
+      setCurrentModel(result.model_id, result.name);
+      addSystemMsg(`Created and activated new model "${result.name}".`);
+      refreshModelStatus();
+    }
+  });
+}
+
+/** Handle matched_model response after a connect call. */
+function handleConnectModelResponse(response, defaultName) {
+  // If a model is already active, just link the new source to it
+  if (_currentModelId && !response.matched_model) {
+    fetch(`/api/models/${_currentModelId}/link-source`, { method: "POST" })
+      .then(() => addSystemMsg(`Linked source to model "${_currentModelName}".`))
+      .catch(() => {});
+    return;
+  }
+
+  if (response.matched_model) {
+    // Auto-set model_id from response, then ask user to confirm
+    if (response.model_id) _currentModelId = response.model_id;
+    showMatchDialog(response.matched_model);
+  } else if (response.model_id) {
+    // Server auto-created or detected a model
+    _currentModelId = response.model_id;
+    fetchActiveModelName(response.model_id);
+  } else {
+    // No model matched and no active model -- auto-create one
+    autoCreateModel(defaultName);
+  }
+}
+
+/** Auto-create a model with a default name. */
+async function autoCreateModel(name) {
+  if (!name) name = "Untitled Model";
+  try {
+    const r = await fetch("/api/models", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name })
+    }).then(res => res.json());
+    if (r.ok && r.model_id) {
+      // Link and activate
+      try {
+        await fetch(`/api/models/${r.model_id}/link-source`, { method: "POST" });
+        await fetch(`/api/models/${r.model_id}/activate`, { method: "POST" });
+      } catch(e) { /* ignore */ }
+      setCurrentModel(r.model_id, name);
+      addSystemMsg(`Auto-created model "${name}".`);
+    }
+  } catch(e) { /* ignore */ }
+}
+
+// Close models-related modals when clicking overlay
+document.addEventListener("click", e => {
+  if (e.target === document.getElementById("models-modal")) closeModelsModal();
+  if (e.target === document.getElementById("model-match-modal")) closeMatchModal();
+  if (e.target === document.getElementById("new-model-modal")) closeNewModelModal();
+});
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 init();

@@ -42,9 +42,10 @@ _lock   = threading.Lock()
 
 _storage = SQLiteStorage(STORAGE_DB)
 
-_source:          DataSource | None     = None   # current data source
-_discovery_agent: DiscoveryAgent | None = None   # for Data Understanding tab
-_scenario_agent:  Agent | None          = None   # for Scenario tab
+_source:           DataSource | None     = None   # current data source
+_discovery_agent:  DiscoveryAgent | None = None   # for Data Understanding tab
+_scenario_agent:   Agent | None          = None   # for Scenario tab
+_current_model_id: str | None            = None   # active model entity
 _status = {"connected": False, "source_type": None, "message": "Not connected"}
 
 # Cashflow structure cache (loaded once per PBI connection)
@@ -63,17 +64,22 @@ def _start_loop():
 threading.Thread(target=_start_loop, daemon=True).start()
 
 
-def _init_agents(source: DataSource, mu: ModelUnderstanding | None = None):
+def _init_agents(source: DataSource, mu: ModelUnderstanding | None = None,
+                 model_id: str | None = None):
     """Initialize both agents for the given source."""
     global _discovery_agent, _scenario_agent
-    _discovery_agent = DiscoveryAgent(source, _storage)
+    _discovery_agent = DiscoveryAgent(source, _storage, model_id=model_id)
     _scenario_agent = Agent(source, mu)
 
 
-def _load_mu_for_source(source: DataSource) -> ModelUnderstanding | None:
-    """Try to load a saved ModelUnderstanding for the given source."""
-    source_id = source.source_id()
-    data = _storage.load_model_understanding(source_id)
+def _load_mu(source: DataSource,
+             model_id: str | None = None) -> ModelUnderstanding | None:
+    """Load ModelUnderstanding.  Prefer *model_id*, fall back to *source_id*."""
+    data = None
+    if model_id:
+        data = _storage.load_model_understanding_by_model(model_id)
+    if not data:
+        data = _storage.load_model_understanding(source.source_id())
     if not data:
         return None
     clean = {k: v for k, v in data.items() if not k.startswith("_")}
@@ -109,13 +115,14 @@ def get_instances():
 def connect():
     """
     Connect to a specific Power BI Desktop model.
-    Body: { "connection_string": "...", "database": "..." }
+    Body: { "connection_string": "...", "database": "...", "model_id": "..." }
     """
-    global _source, _cf_structure
+    global _source, _cf_structure, _current_model_id
     with _lock:
         data     = request.get_json() or {}
         conn_str = data.get("connection_string", "").strip()
         db_guid  = data.get("database", "").strip()
+        model_id = data.get("model_id") or None  # optional — caller may specify
 
         if not conn_str or not db_guid:
             return jsonify({"ok": False,
@@ -128,15 +135,32 @@ def connect():
             _source = source
             _cf_structure = None  # reset CF cache for new connection
 
+            # Auto-detect existing model if model_id not provided
+            matched_model = None
+            if not model_id:
+                matched_model = _storage.find_model_by_source_id(source.source_id())
+                if matched_model:
+                    model_id = matched_model["id"]
+
+            _current_model_id = model_id
+
             # Try to load existing model understanding
-            mu = _load_mu_for_source(source)
-            _init_agents(source, mu)
+            mu = _load_mu(source, model_id=model_id)
+            _init_agents(source, mu, model_id=model_id)
+
+            if model_id:
+                _storage.touch_model(model_id)
 
             _status["connected"]   = True
             _status["source_type"] = "pbi_desktop"
             _status["message"]     = "Connected to Power BI Desktop"
-            return jsonify({"ok": True, "message": _status["message"],
-                            "has_understanding": mu is not None})
+            return jsonify({
+                "ok": True,
+                "message": _status["message"],
+                "has_understanding": mu is not None,
+                "model_id": model_id,
+                "matched_model": matched_model,
+            })
         except Exception as e:
             _status["connected"]   = False
             _status["source_type"] = None
@@ -155,9 +179,9 @@ def connect():
 def connect_excel():
     """
     Upload one or more Excel files as a data source.
-    Accepts multipart/form-data with file fields.
+    Accepts multipart/form-data with file fields and optional model_id.
     """
-    global _source, _cf_structure
+    global _source, _cf_structure, _current_model_id
     with _lock:
         if "files" not in request.files and "file" not in request.files:
             return jsonify({"ok": False,
@@ -167,6 +191,8 @@ def connect_excel():
         if not files:
             return jsonify({"ok": False, "message": "No files uploaded"}), 400
 
+        model_id = request.form.get("model_id") or None
+
         # Save uploaded files
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         saved_paths = []
@@ -175,8 +201,10 @@ def connect_excel():
                 dest = UPLOADS_DIR / f.filename
                 f.save(str(dest))
                 saved_paths.append(dest)
-                # Track in storage
-                _storage.save_file(f.filename, "excel", str(dest))
+                # Track in storage (proper method for externally saved files)
+                _storage.track_uploaded_file(
+                    f.filename, "excel", str(dest), model_id=model_id
+                )
 
         if not saved_paths:
             return jsonify({"ok": False,
@@ -188,8 +216,20 @@ def connect_excel():
             _source = source
             _cf_structure = None
 
-            mu = _load_mu_for_source(source)
-            _init_agents(source, mu)
+            # Auto-detect existing model if model_id not provided
+            matched_model = None
+            if not model_id:
+                matched_model = _storage.find_model_by_source_id(source.source_id())
+                if matched_model:
+                    model_id = matched_model["id"]
+
+            _current_model_id = model_id
+
+            mu = _load_mu(source, model_id=model_id)
+            _init_agents(source, mu, model_id=model_id)
+
+            if model_id:
+                _storage.touch_model(model_id)
 
             _status["connected"]   = True
             _status["source_type"] = "excel"
@@ -199,6 +239,8 @@ def connect_excel():
                 "message": _status["message"],
                 "files": [p.name for p in saved_paths],
                 "has_understanding": mu is not None,
+                "model_id": model_id,
+                "matched_model": matched_model,
             })
         except Exception as e:
             import traceback
@@ -220,13 +262,18 @@ def status():
         "output_dir":         str(OUTPUT_DIR),
         "agent_ready":        _scenario_agent is not None,
         "has_understanding":  _has_confirmed_understanding(),
+        "model_id":           _current_model_id,
     })
 
 
 def _has_confirmed_understanding() -> bool:
     if _source is None:
         return False
-    data = _storage.load_model_understanding(_source.source_id())
+    data = None
+    if _current_model_id:
+        data = _storage.load_model_understanding_by_model(_current_model_id)
+    if not data:
+        data = _storage.load_model_understanding(_source.source_id())
     return data is not None and data.get("status") == "confirmed"
 
 
@@ -238,7 +285,11 @@ def get_understanding():
     with _lock:
         if _source is None:
             return jsonify({"ok": False, "data": None})
-        data = _storage.load_model_understanding(_source.source_id())
+        data = None
+        if _current_model_id:
+            data = _storage.load_model_understanding_by_model(_current_model_id)
+        if not data:
+            data = _storage.load_model_understanding(_source.source_id())
         if not data:
             return jsonify({"ok": True, "data": None})
         clean = {k: v for k, v in data.items() if not k.startswith("_")}
@@ -251,7 +302,11 @@ def model_status():
     with _lock:
         if _source is None:
             return jsonify({"exists": False, "status": None})
-        data = _storage.load_model_understanding(_source.source_id())
+        data = None
+        if _current_model_id:
+            data = _storage.load_model_understanding_by_model(_current_model_id)
+        if not data:
+            data = _storage.load_model_understanding(_source.source_id())
         if not data:
             return jsonify({"exists": False, "status": None})
         return jsonify({"exists": True, "status": data.get("status", "draft")})
@@ -267,12 +322,160 @@ def refresh_understanding():
     with _lock:
         if _source is None:
             return jsonify({"ok": False, "error": "No source connected"})
-        mu = _load_mu_for_source(_source)
+        mu = _load_mu(_source, model_id=_current_model_id)
         if mu is not None:
             _scenario_agent = Agent(_source, mu)
             return jsonify({"ok": True, "status": "refreshed"})
         else:
             return jsonify({"ok": False, "error": "No understanding found"})
+
+
+# ── Routes: Model CRUD ────────────────────────────────────────────────────────
+
+@app.route("/api/models")
+def list_models():
+    """List all saved models (most recently accessed first)."""
+    models = _storage.list_models()
+    # Enrich each model with its understanding status
+    for m in models:
+        mu_data = _storage.load_model_understanding_by_model(m["id"])
+        if not mu_data:
+            # Fallback: check linked sources for an understanding by source_id
+            sources = _storage.get_model_sources(m["id"])
+            for src in sources:
+                sid = src.get("source_id", "")
+                if sid:
+                    mu_data = _storage.load_model_understanding(sid)
+                    if mu_data:
+                        # Retroactively link this understanding to the model
+                        _storage.link_understanding_to_model(sid, m["id"])
+                        break
+        m["understanding_status"] = (
+            mu_data.get("status", "draft") if mu_data else None
+        )
+    return jsonify({"ok": True, "models": models})
+
+
+@app.route("/api/models", methods=["POST"])
+def create_model():
+    """Create a new model.  Body: { "name": "...", "description": "..." }"""
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "name is required"}), 400
+    source_type = data.get("source_type", _status.get("source_type") or "")
+    model_id = _storage.create_model(
+        name, source_type=source_type,
+        description=data.get("description", ""),
+    )
+    # If we have a connected source, link it to the new model
+    if _source is not None:
+        sid = _source.source_id()
+        _storage.add_model_source(
+            model_id, _source.source_type(), sid,
+            label=name,
+            config={"source_id": sid},
+        )
+        # Retroactively link any existing understandings for this source_id
+        _storage.link_understanding_to_model(sid, model_id)
+    return jsonify({"ok": True, "model_id": model_id})
+
+
+@app.route("/api/models/<model_id>")
+def get_model(model_id):
+    """Get model details + linked sources."""
+    model = _storage.get_model(model_id)
+    if not model:
+        return jsonify({"ok": False, "error": "Model not found"}), 404
+    sources = _storage.get_model_sources(model_id)
+    mu_data = _storage.load_model_understanding_by_model(model_id)
+    model["sources"] = sources
+    model["understanding_status"] = (
+        mu_data.get("status", "draft") if mu_data else None
+    )
+    return jsonify({"ok": True, "model": model})
+
+
+@app.route("/api/models/<model_id>", methods=["PUT"])
+def update_model(model_id):
+    """Update model name/description.  Body: { "name": "...", "description": "..." }"""
+    data = request.get_json() or {}
+    _storage.update_model(model_id, **data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/models/<model_id>", methods=["DELETE"])
+def delete_model(model_id):
+    """Delete a model and unlink its sources/understandings."""
+    _storage.delete_model(model_id)
+    global _current_model_id
+    if _current_model_id == model_id:
+        _current_model_id = None
+    return jsonify({"ok": True})
+
+
+@app.route("/api/models/<model_id>/activate", methods=["POST"])
+def activate_model(model_id):
+    """
+    Activate a model — set it as current, load its understanding,
+    and reinitialise agents.  Does NOT reconnect the data source.
+    """
+    global _current_model_id, _scenario_agent
+    with _lock:
+        model = _storage.get_model(model_id)
+        if not model:
+            return jsonify({"ok": False, "error": "Model not found"}), 404
+
+        _current_model_id = model_id
+        _storage.touch_model(model_id)
+
+        # Retroactively link orphan understandings via source_ids
+        sources = _storage.get_model_sources(model_id)
+        for src in sources:
+            sid = src.get("source_id", "")
+            if sid:
+                _storage.link_understanding_to_model(sid, model_id)
+
+        mu = None
+        if _source is not None:
+            mu = _load_mu(_source, model_id=model_id)
+            _init_agents(_source, mu, model_id=model_id)
+
+        return jsonify({
+            "ok": True,
+            "model": model,
+            "has_understanding": mu is not None,
+        })
+
+
+@app.route("/api/models/<model_id>/link-source", methods=["POST"])
+def link_source_to_model(model_id):
+    """Link the currently connected source to a model."""
+    with _lock:
+        model = _storage.get_model(model_id)
+        if not model:
+            return jsonify({"ok": False, "error": "Model not found"}), 404
+        if _source is None:
+            return jsonify({"ok": False, "error": "No source connected"}), 400
+
+        data = request.get_json() or {}
+        label = data.get("label", _source.source_type())
+        sid = _source.source_id()
+        link_id = _storage.add_model_source(
+            model_id, _source.source_type(), sid,
+            label=label,
+            config={"source_id": sid},
+        )
+
+        global _current_model_id
+        _current_model_id = model_id
+        _storage.touch_model(model_id)
+
+        # Reinitialise agents with model context
+        mu = _load_mu(_source, model_id=model_id)
+        _init_agents(_source, mu, model_id=model_id)
+
+        return jsonify({"ok": True, "link_id": link_id})
 
 
 # ── Routes: Discovery Agent (Data Understanding tab) ─────────────────────────
@@ -321,7 +524,7 @@ def chat():
         if _scenario_agent is None:
             # Auto-init with connected source or empty PBI source
             if _source is not None:
-                mu = _load_mu_for_source(_source)
+                mu = _load_mu(_source, model_id=_current_model_id)
                 _scenario_agent = Agent(_source, mu)
             else:
                 # Legacy fallback — create empty PBI source
@@ -488,16 +691,9 @@ def scenario_preview():
         global _cf_structure
         try:
             if _cf_structure is None and _source is not None:
-                # Try to fetch CF structure — only works for PBI sources
-                if _status.get("source_type") == "pbi_desktop":
-                    try:
-                        from dax import fetch_cashflow_structure
-                        from pbi_client import PBIClient
-                        pbi_wrapper = PBIClient.__new__(PBIClient)
-                        pbi_wrapper._source = _source
-                        _cf_structure = _run(fetch_cashflow_structure(pbi_wrapper))
-                    except Exception:
-                        pass
+                # Cashflow structure should come from ModelUnderstanding
+                # if the model has cashflow_config defined
+                pass
 
             if _cf_structure:
                 pos_orig:   dict[int, float] = {}

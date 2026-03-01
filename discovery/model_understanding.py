@@ -166,6 +166,25 @@ class ModelUnderstanding:
     def relationships(self) -> list[dict]:
         return self.raw.get("relationships", [])
 
+    def find_fk_column(self, from_table: str, to_table: str) -> str | None:
+        """
+        Find FK column linking from_table → to_table via relationships.
+
+        Checks both directions since relationship direction varies:
+        some models store fact→dim, others dim→fact.
+        Returns the column name on from_table's side.
+        """
+        for rel in self.relationships:
+            ft = rel.get("from_table", "")
+            fc = rel.get("from_column", "")
+            tt = rel.get("to_table", "")
+            tc = rel.get("to_column", "")
+            if ft == from_table and tt == to_table:
+                return fc
+            if tt == from_table and ft == to_table:
+                return tc
+        return None
+
     # ── Query Templates ────────────────────────────────────────────────────
 
     @property

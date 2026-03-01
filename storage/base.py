@@ -12,12 +12,17 @@ class Storage(ABC):
 
     @abstractmethod
     def save_model_understanding(self, source_id: str, data: dict,
-                                  source_type: str = "") -> str:
+                                  source_type: str = "",
+                                  model_id: str | None = None) -> str:
         """Persist a model understanding. Returns the understanding ID."""
 
     @abstractmethod
     def load_model_understanding(self, source_id: str) -> dict | None:
         """Load the latest model understanding for a source. Returns None if not found."""
+
+    @abstractmethod
+    def load_model_understanding_by_model(self, model_id: str) -> dict | None:
+        """Load the latest model understanding for a model_id. Returns None if not found."""
 
     @abstractmethod
     def list_model_understandings(self) -> list[dict]:

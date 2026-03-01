@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scenario_agent.py — CLI entry point for the FINANCE Scenario Agent.
+scenario_agent.py — CLI entry point for the Scenario Agent.
 
 Discovers open Power BI Desktop models, lets the user pick one,
 then starts an interactive REPL for generating financial scenarios.
@@ -15,15 +15,16 @@ import os
 import sys
 import asyncio
 
-from config import CACHE_DB, OUTPUT_DIR
+from config import OUTPUT_DIR
 from pbi_client import PBIClient, list_pbi_instances
 from agent import Agent
+from storage.sqlite_storage import SQLiteStorage
+from discovery.model_understanding import ModelUnderstanding
 
 
 async def main():
     print("=" * 55)
-    print("  FINANCE Scenario Agent")
-    print(f"  Cache : {CACHE_DB}")
+    print("  Scenario Agent (CLI)")
     print(f"  Output: {OUTPUT_DIR}")
     print("=" * 55)
 
@@ -66,8 +67,22 @@ async def main():
         except Exception as e:
             print(f"WARNING: MCP connection failed: {e}")
 
+    # ── Load Model Understanding ──────────────────────────────────────────────
+    storage = SQLiteStorage()
+    source_id = pbi.source_id()
+    data = storage.load_model_understanding(source_id)
+    if not data:
+        print("\nERROR: No model understanding found for this data source.")
+        print("       Use the web UI (python server.py) to run the Discovery Agent first.")
+        await pbi.disconnect()
+        sys.exit(1)
+
+    clean = {k: v for k, v in data.items() if not k.startswith("_")}
+    mu = ModelUnderstanding.from_dict(clean)
+    print(f"\nLoaded model understanding: {mu.model_name} (status: {mu.status})")
+
     # ── REPL ──────────────────────────────────────────────────────────────────
-    agent = Agent(pbi)
+    agent = Agent(pbi, mu)
     print("\nExample: 'Create a 2026 scenario: +2% revenue in Feb, +5% COGS in March'")
     print("Commands: reset | exit\n")
 
