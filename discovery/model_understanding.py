@@ -233,6 +233,17 @@ class ModelUnderstanding:
     def has_customer_dimension(self) -> bool:
         return bool(self.customer_config.get("customer_table"))
 
+    # ── DAX Measures ──────────────────────────────────────────────────────
+
+    @property
+    def measures(self) -> dict[str, dict]:
+        """DAX measures: {measure_name: {expression, table, description}}"""
+        return self.raw.get("measures", {})
+
+    @property
+    def has_measures(self) -> bool:
+        return bool(self.measures)
+
     # ── Serialization ──────────────────────────────────────────────────────
 
     def to_json(self) -> str:

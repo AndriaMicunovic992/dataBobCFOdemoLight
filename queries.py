@@ -112,7 +112,7 @@ def _build_dax_fetch_budget(ft, dc, amt_cols, account_fk,
     if cc:
         filters.append(f"'{ft}'[{cc}] = {{company_id}}")
     if stc and budget_val is not None:
-        filters.append(f"'{ft}'[{stc}] = {budget_val}")
+        filters.append(f"'{ft}'[{stc}] = {{value_type_id}}")
 
     filter_str = " && ".join(filters)
 
@@ -185,7 +185,7 @@ def _build_sql_fetch_budget(ft, dc, amt_cols, account_fk,
     if cc:
         wheres.append(f"{cc} = {{company_id}}")
     if stc and budget_val is not None:
-        wheres.append(f"{stc} = {budget_val}")
+        wheres.append(f"{stc} = {{value_type_id}}")
 
     where_str = " AND ".join(wheres)
 
@@ -316,11 +316,16 @@ def _build_sql_fetch_account_map(acct_table, id_col, name_col,
 async def fetch_budget_generic(source: DataSource,
                                 mu: ModelUnderstanding,
                                 year: int,
-                                months: list[int] | None = None) -> list[dict]:
+                                months: list[int] | None = None,
+                                value_type_override: int | None = None) -> list[dict]:
     """
     Fetch budget/baseline data using query templates from ModelUnderstanding.
 
     If no explicit template exists, auto-builds one from scenario_target metadata.
+
+    Args:
+        value_type_override: If provided, use this value_type_id instead of
+            the default budget value. Allows switching between actuals/budget/etc.
 
     Returns rows in the standard format:
         {account, date, amount, budget_amount, currency_id, ..., account_nr, account_name, ...}
@@ -346,15 +351,23 @@ async def fetch_budget_generic(source: DataSource,
         month_list = ", ".join(str(m) for m in months)
         month_filter = f" AND EXTRACT(MONTH FROM {mu.date_column}) IN ({month_list})"
 
+    # Resolve value_type_id: override → default budget value
+    stv = mu.scenario_type_values
+    default_vt = stv.get("budget", stv.get("scenario_base", ""))
+    vt_id = value_type_override if value_type_override is not None else default_vt
+
     # Fill template
     query = template.format(
         year=year,
         month_filter=month_filter,
         company_id=mu.company_id or "",
+        value_type_id=vt_id,
     )
 
     print(f"[Query] Fetching {year} budget" +
           (f" months={months}" if months else "") + "...")
+    print(f"[Query] Template source: {'explicit' if mu.get_query_template('fetch_budget') else 'auto-built'}")
+    print(f"[Query] SQL/DAX: {query[:200]}...")
     resp = await source.query(query)
 
     if not resp.get("success"):

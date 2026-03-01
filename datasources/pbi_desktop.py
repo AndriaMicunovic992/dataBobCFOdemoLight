@@ -147,6 +147,31 @@ class PBIDesktopSource(DataSource):
         print(f"[PBI] Schema: {len(tables)} tables, {len(relationships)} relationships")
         return {"tables": tables, "relationships": relationships}
 
+    async def get_measures(self) -> list[dict]:
+        """Fetch DAX measures from the PBI model via MCP measure_operations."""
+        if not self._session:
+            return []
+        try:
+            raw = await self._session.call_tool("measure_operations", {
+                "request": {"operation": "List"}
+            })
+            measure_data = json.loads(raw.content[0].text if raw.content else "{}")
+            measures = []
+            for m in measure_data.get("data", []):
+                measures.append({
+                    "name":        m.get("name", ""),
+                    "expression":  m.get("expression", ""),
+                    "table":       m.get("tableName", ""),
+                    "description": m.get("description", ""),
+                    "data_type":   m.get("dataType", ""),
+                    "is_hidden":   m.get("isHidden", False),
+                })
+            print(f"[PBI] Measures: {len(measures)} found")
+            return measures
+        except Exception as e:
+            print(f"[PBI] Could not fetch measures: {e}")
+            return []
+
     async def get_sample_data(self, table_name: str,
                                max_rows: int = 100) -> list[dict]:
         query = f"EVALUATE TOPN({max_rows}, '{table_name}')"

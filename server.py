@@ -69,7 +69,14 @@ def _init_agents(source: DataSource, mu: ModelUnderstanding | None = None,
     """Initialize both agents for the given source."""
     global _discovery_agent, _scenario_agent
     _discovery_agent = DiscoveryAgent(source, _storage, model_id=model_id)
-    _scenario_agent = Agent(source, mu)
+    if mu is not None:
+        try:
+            _scenario_agent = Agent(source, mu)
+        except Exception as e:
+            print(f"[Init] Scenario agent init failed: {e}")
+            _scenario_agent = None
+    else:
+        _scenario_agent = None
 
 
 def _try_reconnect_sources(model_id: str) -> DataSource | None:
@@ -152,6 +159,12 @@ def get_instances():
     """
     try:
         from config import POWERBI_EXE
+        if not POWERBI_EXE:
+            return jsonify({
+                "ok": False,
+                "error": "POWERBI_MCP_EXE not configured. Set it in .env or as an environment variable.",
+                "instances": [],
+            })
         instances = _run(list_pbi_instances(POWERBI_EXE))
         return jsonify({"ok": True, "instances": instances})
     except Exception as e:
@@ -420,6 +433,7 @@ def model_overview():
         if _current_model_id:
             for s in _storage.get_model_sources(_current_model_id):
                 sources.append({
+                    "link_id": s.get("id"),
                     "label": s.get("label", s.get("source_type", "")),
                     "source_type": s.get("source_type", ""),
                     "connected": (_source is not None and
@@ -444,6 +458,11 @@ def model_overview():
             "has_account_structure": bool(clean.get("account_structure", {}).get("groups")),
             "filter_dimensions": list(clean.get("filter_dimensions", {}).keys()),
             "sources": sources,
+            "measures": [
+                {"name": name, "table": info.get("table", ""),
+                 "expression": info.get("expression", "")}
+                for name, info in clean.get("measures", {}).items()
+            ],
         }
         return jsonify({"ok": True, "data": overview})
 
@@ -464,6 +483,88 @@ def refresh_understanding():
             return jsonify({"ok": True, "status": "refreshed"})
         else:
             return jsonify({"ok": False, "error": "No understanding found"})
+
+
+@app.route("/api/model/understanding/patch", methods=["POST"])
+def patch_understanding():
+    """Apply a partial update to the current model understanding."""
+    global _scenario_agent
+    with _lock:
+        if _source is None:
+            return jsonify({"ok": False, "error": "No source connected"}), 400
+
+        patch = request.get_json()
+        if not patch:
+            return jsonify({"ok": False, "error": "Empty patch"}), 400
+
+        # Load current understanding
+        mu_data = None
+        if _current_model_id:
+            mu_data = _storage.load_model_understanding_by_model(_current_model_id)
+        if not mu_data and _source:
+            mu_data = _storage.load_model_understanding(_source.source_id())
+        if not mu_data:
+            return jsonify({"ok": False, "error": "No model understanding found"}), 404
+
+        meta = mu_data.get("_meta", {})
+        clean = {k: v for k, v in mu_data.items() if not k.startswith("_")}
+
+        # Apply deep merge
+        from discovery.model_understanding import _deep_merge
+        _deep_merge(clean, patch)
+
+        _storage.save_model_understanding(
+            meta.get("source_id", _source.source_id() if _source else ""),
+            clean,
+            source_type=meta.get("source_type", ""),
+            model_id=_current_model_id,
+        )
+
+        # Refresh scenario agent
+        mu = _load_mu(_source, model_id=_current_model_id)
+        if mu is not None:
+            try:
+                _scenario_agent = Agent(_source, mu)
+            except Exception:
+                pass
+
+        return jsonify({"ok": True})
+
+
+# ── Routes: Scenario Base Types ──────────────────────────────────────────────
+
+_scenario_base_type: str = "budget"
+
+
+@app.route("/api/scenario/base-types")
+def get_base_types():
+    """Return available scenario base types from ModelUnderstanding."""
+    with _lock:
+        mu = None
+        if _source:
+            mu = _load_mu(_source, model_id=_current_model_id)
+        if not mu:
+            return jsonify({"ok": True, "types": [], "active": "budget"})
+
+        stv = mu.scenario_type_values
+        types = [
+            {"key": k, "value": v, "label": k.replace("_", " ").title()}
+            for k, v in stv.items()
+        ]
+        return jsonify({"ok": True, "types": types, "active": _scenario_base_type})
+
+
+@app.route("/api/scenario/set-base", methods=["POST"])
+def set_base_type():
+    """Set the active base type for scenario queries."""
+    global _scenario_base_type
+    with _lock:
+        data = request.get_json() or {}
+        _scenario_base_type = data.get("base_type", "budget")
+        # Reset rows so next query uses the new base
+        if _scenario_agent:
+            _scenario_agent.rows = []
+        return jsonify({"ok": True, "active": _scenario_base_type})
 
 
 # ── Routes: Model CRUD ────────────────────────────────────────────────────────
@@ -633,6 +734,17 @@ def link_source_to_model(model_id):
         return jsonify({"ok": True, "link_id": link_id})
 
 
+@app.route("/api/models/<model_id>/sources/<link_id>", methods=["DELETE"])
+def remove_model_source_link(model_id, link_id):
+    """Unlink a data source from a model."""
+    with _lock:
+        model = _storage.get_model(model_id)
+        if not model:
+            return jsonify({"ok": False, "error": "Model not found"}), 404
+        _storage.remove_model_source(link_id)
+        return jsonify({"ok": True})
+
+
 # ── Routes: Discovery Agent (Data Understanding tab) ─────────────────────────
 
 @app.route("/api/discovery/chat", methods=["POST"])
@@ -649,6 +761,16 @@ def discovery_chat():
                             "error": "No data source connected. Connect to PBI or upload Excel first."}), 400
         try:
             reply = _run(_discovery_agent.chat(msg))
+
+            # Auto-refresh scenario agent if understanding may have changed
+            global _scenario_agent
+            mu = _load_mu(_source, model_id=_current_model_id)
+            if mu is not None:
+                try:
+                    _scenario_agent = Agent(_source, mu)
+                except Exception:
+                    pass  # MU may still be incomplete during discovery
+
             return jsonify({"ok": True, "reply": reply})
         except Exception as e:
             import traceback
@@ -688,6 +810,8 @@ def chat():
                 _scenario_agent = Agent(_source)
 
         try:
+            # Apply base type override (actuals/budget/etc.)
+            _scenario_agent.base_type = _scenario_base_type
             reply = _run(_scenario_agent.chat(msg))
             sql_files = sorted(OUTPUT_DIR.glob("scenario_*.sql"),
                                key=lambda f: f.stat().st_mtime, reverse=True)
@@ -903,6 +1027,15 @@ def scenario_preview():
         if mu is not None:
             pl_groups = sorted(mu.pl_groups) if mu.pl_groups else None
 
+        # Fallback: derive groups from actual account data if MU has none
+        if pl_groups is None and acc_meta:
+            all_groups = sorted({
+                meta.get("grp", "") for meta in acc_meta.values()
+                if meta.get("grp")
+            })
+            if all_groups:
+                pl_groups = all_groups
+
         try:
             return jsonify({
                 "ok":        True,
@@ -944,8 +1077,12 @@ def get_file(filename):
 # ── Start ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: set ANTHROPIC_API_KEY"); sys.exit(1)
+    from config import DISCOVERY_API_KEY, SCENARIO_API_KEY
+    if not (DISCOVERY_API_KEY or SCENARIO_API_KEY):
+        print("ERROR: set at least one API key.")
+        print("  Use ANTHROPIC_API_KEY, or DISCOVERY_API_KEY + SCENARIO_API_KEY")
+        print("  Set them in .env or as environment variables.")
+        sys.exit(1)
 
     print(f"Starting Scenario Agent UI on http://{HOST}:{PORT}")
     print("Opening browser...")

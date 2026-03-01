@@ -25,6 +25,7 @@ class PromptBuilder:
             PromptBuilder._intro(mu),
             PromptBuilder._data_model(mu),
             PromptBuilder._accounts(mu),
+            PromptBuilder._measures_section(mu),
             PromptBuilder._customer_section(mu),
             _WORKFLOW_TEMPLATE,
             PromptBuilder._cashflow_section(mu),
@@ -119,6 +120,21 @@ class PromptBuilder:
             lines.append('\nSpecific subset: account_group="112,114" '
                         '(comma-separated IDs).')
 
+        return "\n".join(lines)
+
+    @staticmethod
+    def _measures_section(mu: ModelUnderstanding) -> str:
+        measures = mu.measures
+        if not measures:
+            return ""
+        lines = [
+            "== DAX MEASURES ==",
+            "Available DAX measures (contain business logic, can be used in queries):",
+        ]
+        for name, info in measures.items():
+            expr = (info.get("expression") or "")[:100]
+            table = info.get("table", "")
+            lines.append(f"  [{table}][{name}] = {expr}")
         return "\n".join(lines)
 
     @staticmethod

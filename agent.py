@@ -16,7 +16,7 @@ import json
 
 import anthropic
 
-from config import CLAUDE_MODEL
+from config import SCENARIO_MODEL
 from datasources.base import DataSource
 from discovery.model_understanding import ModelUnderstanding
 from prompts.builder import PromptBuilder
@@ -164,11 +164,13 @@ class Agent:
             )
         self.source            = source
         self.mu                = mu
-        self.ai                = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        from config import SCENARIO_API_KEY
+        self.ai                = anthropic.Anthropic(api_key=SCENARIO_API_KEY)
         self.conv : list[dict] = []
         self.rows : list[dict] = []   # in-memory budget data
         self.staged: list[dict] = []  # staged adjustment groups [{description, adjustments}]
         self.next_scenario_id  = 3    # increments with each applied scenario
+        self.base_type: str | None = None  # override for value_type (set by server)
 
         # Build prompt and tools dynamically from ModelUnderstanding
         self._system_prompt = PromptBuilder.build(mu)
@@ -204,8 +206,15 @@ class Agent:
             year   = inp.get("year", 2026)
             months = inp.get("months")
 
+            # Resolve value_type override from base_type setting
+            vt_override = None
+            if self.base_type:
+                stv = self.mu.scenario_type_values
+                vt_override = stv.get(self.base_type)
+
             rows = await fetch_budget_generic(
-                self.source, self.mu, year, months
+                self.source, self.mu, year, months,
+                value_type_override=vt_override,
             )
 
             if not rows:
@@ -288,7 +297,7 @@ class Agent:
 
         while True:
             resp = self.ai.messages.create(
-                model=CLAUDE_MODEL, max_tokens=1024,
+                model=SCENARIO_MODEL, max_tokens=1024,
                 system=self._system_prompt,
                 tools=self._tools,
                 messages=self.conv,

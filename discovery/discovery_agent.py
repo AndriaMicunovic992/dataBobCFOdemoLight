@@ -30,7 +30,8 @@ Produce a structured JSON document (the Model Understanding) that describes:
 4. What the key columns are (accounts, dates, amounts, categories)
 5. How accounts are grouped (revenue, costs, balance sheet, etc.)
 6. What filters apply (company, value type, etc.)
-7. **CRITICAL: Working query templates** for fetching budget data and account metadata
+7. What DAX measures exist and which are important for analysis
+8. **CRITICAL: Working query templates** for fetching budget data and account metadata
 
 == WORKFLOW ==
 1. Start by calling `extract_schema` to get the raw schema with sample data.
@@ -111,6 +112,9 @@ When calling save_understanding, provide JSON with this structure:
   "sql_target": {
     "table_name": "[Fact Table Name]",
     "columns": ["main_account_id", "company_id", "accounting_date", "..."]
+  },
+  "measures": {
+    "MeasureName": {"expression": "SUM(...)", "table": "TableName", "description": "Short desc"}
   },
   "cashflow_config": {
     "structure_table": "DimCashflow",
@@ -350,7 +354,8 @@ class DiscoveryAgent:
         self.source = source
         self.storage = storage
         self.model_id = model_id
-        self.ai = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        from config import DISCOVERY_API_KEY
+        self.ai = anthropic.Anthropic(api_key=DISCOVERY_API_KEY)
         self.conv: list[dict] = []
         self._schema_cache: dict | None = None
 
@@ -401,6 +406,17 @@ class DiscoveryAgent:
                     lines.append(
                         f"  {r.get('from_table')}.{r.get('from_column')} → "
                         f"{r.get('to_table')}.{r.get('to_column')}{active}"
+                    )
+
+            measures = schema.get("measures", [])
+            if measures:
+                lines.append("")
+                lines.append(f"=== DAX MEASURES ({len(measures)}) ===")
+                for m in measures:
+                    hidden = " [hidden]" if m.get("is_hidden") else ""
+                    expr = (m.get("expression") or "")[:80]
+                    lines.append(
+                        f"  [{m.get('table', '')}] {m.get('name', '')}{hidden} = {expr}"
                     )
 
             return "\n".join(lines)
@@ -471,7 +487,7 @@ class DiscoveryAgent:
 
         Handles tool calls automatically, same pattern as the scenario agent.
         """
-        from config import CLAUDE_MODEL
+        from config import DISCOVERY_MODEL
 
         self.conv.append({"role": "user", "content": msg})
 
@@ -481,7 +497,7 @@ class DiscoveryAgent:
         while True:
             try:
                 resp = self.ai.messages.create(
-                    model=CLAUDE_MODEL,
+                    model=DISCOVERY_MODEL,
                     max_tokens=16384,
                     system=DISCOVERY_PROMPT,
                     tools=DISCOVERY_TOOLS,
