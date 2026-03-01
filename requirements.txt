@@ -1,2 +1,5 @@
 anthropic>=0.40.0
 mcp>=1.0.0
+flask>=3.0.0
+openpyxl>=3.1.0
+duckdb>=0.10.0

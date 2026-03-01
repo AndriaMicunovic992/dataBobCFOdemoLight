@@ -113,7 +113,78 @@
   .dot.error     { background: var(--red);   box-shadow: 0 0 0 3px rgba(208,64,96,0.28); }
   #status-text   { color: rgba(255,255,255,0.50); }
 
+  /* Model understanding badge */
+  .model-status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px 4px 8px;
+    border-radius: 20px;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+  .model-status-badge.no-model {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    color: rgba(255,255,255,0.35);
+  }
+  .model-status-badge.draft {
+    background: rgba(212,137,14,0.15);
+    border: 1px solid rgba(212,137,14,0.30);
+    color: var(--amber);
+  }
+  .model-status-badge.confirmed {
+    background: rgba(39,168,130,0.15);
+    border: 1px solid rgba(39,168,130,0.30);
+    color: var(--green);
+  }
+  .model-status-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .model-status-badge.no-model .model-status-dot { background: rgba(255,255,255,0.25); }
+  .model-status-badge.draft .model-status-dot    { background: var(--amber); }
+  .model-status-badge.confirmed .model-status-dot { background: var(--green); }
+
   .header-actions { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+
+  /* Data source dropdown */
+  .ds-dropdown {
+    position: relative;
+    display: inline-block;
+  }
+  .ds-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    box-shadow: var(--shadow);
+    min-width: 200px;
+    z-index: 50;
+    overflow: hidden;
+  }
+  .ds-dropdown.open .ds-dropdown-menu { display: block; }
+  .ds-dropdown-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 14px;
+    font-size: 12.5px; font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.12s;
+    border: none; background: none; width: 100%;
+    text-align: left;
+    font-family: 'Inter', sans-serif;
+  }
+  .ds-dropdown-item:hover { background: var(--accent-lt); color: var(--accent-dk); }
+  .ds-dropdown-item + .ds-dropdown-item { border-top: 1px solid var(--border); }
+  .ds-dropdown-item .ds-icon { font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
+  .ds-dropdown-item .ds-label { flex: 1; }
+  .ds-dropdown-item .ds-sub { font-size: 10px; color: var(--muted); display: block; margin-top: 1px; font-weight: 400; }
+
   .h-btn {
     padding: 6px 14px;
     border-radius: var(--rs);
@@ -133,7 +204,7 @@
 
 
   /* ══════════════════════════════════════
-     MAIN CHAT
+     MAIN AREA — TABS + CHAT
   ══════════════════════════════════════ */
   main {
     grid-area: main;
@@ -143,7 +214,82 @@
     background: var(--bg);
   }
 
-  #messages {
+  /* Tab bar at top of main */
+  .main-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+  }
+  .main-tab {
+    padding: 11px 20px 9px;
+    font-size: 12.5px; font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    border: none; background: none;
+    border-bottom: 2.5px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    font-family: 'Inter', sans-serif;
+    letter-spacing: -0.01em;
+    position: relative;
+  }
+  .main-tab:hover { color: var(--text2); }
+  .main-tab.active {
+    color: var(--accent-dk);
+    border-bottom-color: var(--accent);
+  }
+  .main-tab .tab-badge {
+    font-size: 8.5px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 8px;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.04em;
+  }
+  .main-tab .tab-badge.draft {
+    background: var(--amber-lt);
+    color: var(--amber);
+    border: 1px solid var(--amber-bd);
+  }
+  .main-tab .tab-badge.confirmed {
+    background: var(--green-lt);
+    color: var(--green);
+    border: 1px solid rgba(39,168,130,0.22);
+  }
+
+  /* Tab panels */
+  .tab-panel {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .tab-panel.active {
+    display: flex;
+  }
+
+  /* Scenario notice banner */
+  .scenario-notice {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 24px;
+    background: var(--amber-lt);
+    border-bottom: 1px solid var(--amber-bd);
+    font-size: 12px; color: var(--amber);
+    font-weight: 500;
+  }
+  .scenario-notice a {
+    color: var(--amber);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .scenario-notice a:hover { color: #bb7a0b; }
+
+  /* Shared chat styles */
+  .chat-messages {
     flex: 1;
     overflow-y: auto;
     padding: 22px 30px;
@@ -152,9 +298,9 @@
     gap: 4px;
     scroll-behavior: smooth;
   }
-  #messages::-webkit-scrollbar { width: 5px; }
-  #messages::-webkit-scrollbar-track { background: transparent; }
-  #messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  .chat-messages::-webkit-scrollbar { width: 5px; }
+  .chat-messages::-webkit-scrollbar-track { background: transparent; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
   .msg {
     display: flex; flex-direction: column;
@@ -242,7 +388,7 @@
     border-top: 1px solid var(--border);
     box-shadow: 0 -2px 12px rgba(20,45,65,0.05);
   }
-  #input {
+  .chat-input {
     flex: 1;
     background: var(--bg);
     border: 1.5px solid var(--border);
@@ -253,9 +399,9 @@
     outline: none; transition: border-color 0.15s, box-shadow 0.15s;
     line-height: 1.55;
   }
-  #input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(106,187,217,0.13); }
-  #input::placeholder { color: var(--muted); }
-  #send {
+  .chat-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(106,187,217,0.13); }
+  .chat-input::placeholder { color: var(--muted); }
+  .chat-send {
     padding: 9px 20px; height: 40px;
     background: var(--accent); border: none;
     border-radius: var(--r); color: #fff;
@@ -264,7 +410,42 @@
     white-space: nowrap; box-shadow: 0 2px 8px rgba(106,187,217,0.28);
     letter-spacing: -0.01em;
   }
-  #send:hover { background: var(--accent-dk); box-shadow: 0 4px 14px rgba(106,187,217,0.40); }
+  .chat-send:hover { background: var(--accent-dk); box-shadow: 0 4px 14px rgba(106,187,217,0.40); }
+
+  /* Discovery tab header bar */
+  .discovery-header {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .discovery-header .dh-label {
+    font-size: 11px; font-weight: 600; color: var(--text2);
+    flex: 1;
+  }
+  .discovery-header .dh-status {
+    font-size: 10.5px; font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 12px;
+  }
+  .dh-status.no-model { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+  .dh-status.draft    { background: var(--amber-lt); color: var(--amber); border: 1px solid var(--amber-bd); }
+  .dh-status.confirmed { background: var(--green-lt); color: var(--green); border: 1px solid rgba(39,168,130,0.22); }
+  .discovery-header .s-btn { padding: 5px 10px; font-size: 11px; }
+
+  /* Discovery quick actions bar */
+  .discovery-quick {
+    flex: 0 0 auto;
+    display: flex; gap: 6px;
+    padding: 8px 24px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .discovery-quick .s-btn { font-size: 11.5px; padding: 6px 12px; }
+
+  /* Hidden file input */
+  #excel-file-input { display: none; }
 
 
   /* ══════════════════════════════════════
@@ -280,7 +461,7 @@
     border-left: 1px solid var(--border);
   }
 
-  /* ─── zone header (shared) ─── */
+  /* --- zone header (shared) --- */
   .zone-hd {
     flex: 0 0 auto;
     padding: 11px 14px 9px;
@@ -295,7 +476,7 @@
   }
   .zone-bd { border-bottom: 1px solid var(--border); }
 
-  /* ─── ZONE 1: Quick Actions (fixed, scrollable internally) ─── */
+  /* --- ZONE 1: Quick Actions (fixed, scrollable internally) --- */
   .zone-quick {
     flex: 0 0 auto;
     border-bottom: 1px solid var(--border);
@@ -337,7 +518,7 @@
   }
   .quick-btn:hover .qb-sub { color: var(--accent-dk); opacity: 0.7; }
 
-  /* ─── ZONE 2: Scenario Builder (FLEX — takes remaining space) ─── */
+  /* --- ZONE 2: Scenario Builder (FLEX -- takes remaining space) --- */
   .zone-builder {
     flex: 1 1 0;           /* fills all remaining height */
     min-height: 100px;
@@ -380,7 +561,7 @@
     border: 1px solid var(--amber-bd);
     border-left: 3px solid var(--amber);
     border-radius: var(--rs);
-    padding: 9px 30px 10px 11px;  /* right padding leaves room for ✕ button */
+    padding: 9px 30px 10px 11px;  /* right padding leaves room for x button */
     margin-bottom: 6px;
     box-shadow: var(--shadow-xs);
     transition: box-shadow 0.15s;
@@ -460,7 +641,7 @@
   .scenario-name-input::placeholder { color: var(--muted); }
   .staged-btn-row { display: flex; gap: 6px; }
 
-  /* ─── ZONE 3: Stats (fixed) ─── */
+  /* --- ZONE 3: Stats (fixed) --- */
   .zone-stats {
     flex: 0 0 auto;
     border-bottom: 1px solid var(--border);
@@ -478,7 +659,7 @@
   }
   .stat-lbl { font-size: 9.5px; color: var(--muted); margin-top: 3px; font-weight: 500; letter-spacing: 0.04em; }
 
-  /* ─── ZONE 4: Generated Files (fixed height, internal scroll) ─── */
+  /* --- ZONE 4: Generated Files (fixed height, internal scroll) --- */
   .zone-files {
     flex: 0 0 160px;
     display: flex;
@@ -514,7 +695,7 @@
   .file-meta { font-size: 9.5px; color: var(--muted); margin-top: 2px; }
   .no-files { font-size: 11px; color: var(--muted); text-align: center; padding: 20px 0; font-style: italic; }
 
-  /* ─── Generic sidebar buttons ─── */
+  /* --- Generic sidebar buttons --- */
   .s-btn {
     padding: 7px 12px;
     border-radius: var(--rs);
@@ -641,7 +822,7 @@
   .preview-summary .iv.pos { color: var(--green); }
   .preview-summary .iv.neg { color: var(--red); }
 
-  /* View toggle (Δ Delta / Compare) */
+  /* View toggle */
   .view-toggle {
     display: flex; background: var(--bg);
     border: 1px solid var(--border); border-radius: 6px;
@@ -659,7 +840,7 @@
     box-shadow: var(--shadow-xs);
   }
 
-  /* Table wrapper — scrolls both axes */
+  /* Table wrapper */
   .preview-body {
     padding: 0; overflow: hidden;
     display: flex; flex-direction: column;
@@ -680,7 +861,7 @@
     white-space: nowrap;
   }
 
-  /* ── Sticky header row ── */
+  /* Sticky header row */
   .pt thead th {
     position: sticky; top: 0; z-index: 2;
     background: var(--bg);
@@ -704,13 +885,13 @@
     color: var(--text2);
   }
 
-  /* ── Body rows ── */
+  /* Body rows */
   .pt tbody tr { border-bottom: 1px solid var(--border); }
   .pt tbody tr:hover td { background: #f5f8fb !important; }
   .pt tbody tr:hover td.pt-ac  { background: #f5f8fb !important; }
   .pt tbody tr.rchg { background: rgba(212,137,14,0.025); }
 
-  /* ── Sticky account column ── */
+  /* Sticky account column */
   .pt td.pt-ac {
     position: sticky; left: 0; z-index: 1;
     background: var(--surface);
@@ -724,7 +905,7 @@
   .pt-nm   { font-size: 11.5px; font-weight: 500; color: var(--text); line-height: 1.3; }
   .pt-grp  { font-size: 9px; color: var(--muted); margin-top: 1px; }
 
-  /* ── Data cells ── */
+  /* Data cells */
   .pt td.pt-d {
     padding: 7px 11px;
     text-align: right;
@@ -760,7 +941,7 @@
   .cmp-delta.pos { color: var(--green); }
   .cmp-delta.neg { color: var(--red); }
 
-  /* ── Totals row ── */
+  /* Totals row */
   .pt tr.trow td {
     background: var(--bg) !important;
     border-top: 2px solid var(--border2);
@@ -776,7 +957,7 @@
     background: var(--bg) !important;
   }
 
-  /* ── Group header rows (level 1) ── */
+  /* Group header rows (level 1) */
   .pt tr.grow > td {
     background: var(--bg);
     border-top: 2px solid var(--border2);
@@ -824,7 +1005,7 @@
   .grp-delta.pos { color: var(--green); background: var(--green-lt); border-color: rgba(39,168,130,0.22); }
   .grp-delta.neg { color: var(--red);   background: var(--red-lt);   border-color: rgba(208,64,96,0.22);  }
 
-  /* ── Child account rows (level 2) — indented ── */
+  /* Child account rows (level 2) -- indented */
   .pt tr.gchild > td.pt-ac {
     padding-left: 26px;
     background: var(--surface2);
@@ -844,7 +1025,7 @@
     color: var(--accent-dk);
   }
 
-  /* ── Waterfall chart ── */
+  /* Waterfall chart */
   .wf-wrap {
     flex: 1; padding: 28px 24px 16px; display: flex;
     align-items: center; justify-content: center; overflow: hidden;
@@ -855,7 +1036,7 @@
   .wf-bar { transition: opacity 0.15s; cursor: default; }
   .wf-bar:hover { opacity: 0.75; }
 
-  /* ── Preview tab bar (P&L / Cashflow) ── */
+  /* Preview tab bar (P&L / Cashflow) */
   .preview-tabs {
     display: flex; background: var(--bg);
     border: 1px solid var(--border); border-radius: 6px;
@@ -874,7 +1055,7 @@
     box-shadow: var(--shadow-xs);
   }
 
-  /* ── Cashflow impact table ── */
+  /* Cashflow impact table */
   .cf-wrap { flex: 1; overflow: auto; padding: 8px 0; }
   .cf-tbl {
     width: 100%; border-collapse: separate; border-spacing: 0;
@@ -939,63 +1120,129 @@
 
   <div class="status-pill">
     <div class="dot" id="dot"></div>
-    <span id="status-text">Initialising…</span>
+    <span id="status-text">Initialising...</span>
+  </div>
+
+  <div class="model-status-badge no-model" id="model-understanding-badge">
+    <span class="model-status-dot"></span>
+    <span id="model-understanding-text">No Model</span>
   </div>
 
   <div class="header-actions">
-    <button class="h-btn" onclick="resetChat()">↺ Reset</button>
-    <button class="h-btn accent" id="connect-btn" onclick="connect()">⊕ Connect Model</button>
+    <button class="h-btn" onclick="resetChat()">&#8634; Reset</button>
+    <div class="ds-dropdown" id="ds-dropdown">
+      <button class="h-btn accent" id="connect-btn" onclick="toggleDataSourceMenu()">&#8853; Data Source</button>
+      <div class="ds-dropdown-menu">
+        <button class="ds-dropdown-item" onclick="connectPBI()">
+          <span class="ds-icon">&#8853;</span>
+          <span>
+            <span class="ds-label">Connect PBI</span>
+            <span class="ds-sub">Open Power BI Desktop model</span>
+          </span>
+        </button>
+        <button class="ds-dropdown-item" onclick="uploadExcel()">
+          <span class="ds-icon">&#8593;</span>
+          <span>
+            <span class="ds-label">Upload Excel</span>
+            <span class="ds-sub">Upload .xlsx files as data source</span>
+          </span>
+        </button>
+      </div>
+    </div>
   </div>
 </header>
 
-<!-- ════ MAIN CHAT ════ -->
+<!-- Hidden file input for Excel upload -->
+<input type="file" id="excel-file-input" accept=".xlsx" multiple>
+
+<!-- ════ MAIN AREA ════ -->
 <main>
-  <div id="messages"></div>
-  <div class="input-area">
-    <textarea id="input"
-      placeholder="e.g. Stage +2% revenue for February, then +5% COGS for Q1…"
-      rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-    <button id="send" onclick="sendMessage()">Send ↵</button>
+  <!-- Tab bar -->
+  <div class="main-tabs">
+    <button class="main-tab active" id="tab-discovery" onclick="switchMainTab('discovery')">
+      Data Understanding
+      <span class="tab-badge" id="tab-discovery-badge" style="display:none"></span>
+    </button>
+    <button class="main-tab" id="tab-scenario" onclick="switchMainTab('scenario')">
+      Scenario
+    </button>
+  </div>
+
+  <!-- ═══ Data Understanding Tab ═══ -->
+  <div class="tab-panel active" id="panel-discovery">
+    <div class="discovery-header">
+      <span class="dh-label">Discovery Agent — explore and understand your data model</span>
+      <span class="dh-status no-model" id="dh-status-badge">No Model</span>
+      <button class="s-btn" onclick="refreshModelUnderstanding()" title="Refresh model understanding">&#8634; Refresh</button>
+      <button class="s-btn ghost" onclick="resetDiscoveryChat()" title="Reset discovery chat">&#10005; Reset</button>
+    </div>
+    <div class="discovery-quick">
+      <button class="s-btn" onclick="discoveryQuickSend('Analyze my data model')">&#9656; Start Discovery</button>
+      <button class="s-btn" onclick="discoveryQuickSend('Show me the table structure')">&#9776; Table Structure</button>
+      <button class="s-btn" onclick="discoveryQuickSend('What measures are available?')">&#402; Measures</button>
+    </div>
+    <div class="chat-messages" id="discovery-messages"></div>
+    <div class="input-area">
+      <textarea id="discovery-input" class="chat-input"
+        placeholder="Ask about your data model, tables, measures, relationships..."
+        rows="1" onkeydown="handleDiscoveryKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="chat-send" onclick="sendDiscoveryMessage()">Send &#8629;</button>
+    </div>
+  </div>
+
+  <!-- ═══ Scenario Tab ═══ -->
+  <div class="tab-panel" id="panel-scenario">
+    <div class="scenario-notice" id="scenario-notice" style="display:none">
+      <span>&#9888;</span>
+      <span>No confirmed model understanding yet. <a onclick="switchMainTab('discovery')">Go to Data Understanding</a> to analyze your model first.</span>
+    </div>
+    <div class="chat-messages" id="messages"></div>
+    <div class="input-area">
+      <textarea id="input" class="chat-input"
+        placeholder="e.g. Stage +2% revenue for February, then +5% COGS for Q1..."
+        rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button id="send" class="chat-send" onclick="sendMessage()">Send &#8629;</button>
+    </div>
   </div>
 </main>
 
 <!-- ════ SIDEBAR ════ -->
 <aside>
 
-  <!-- ── Zone 1: Quick Actions ── -->
+  <!-- -- Zone 1: Quick Actions -- -->
   <div class="zone-quick">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Quick Actions</span>
     </div>
     <div class="quick-scroll">
       <button class="quick-btn" onclick="quickSend('Load 2026 budget data')">
-        ↓ Load 2026 Budget
+        &#8595; Load 2026 Budget
         <span class="qb-sub">Fetch GL baseline from Power BI</span>
       </button>
       <button class="quick-btn" onclick="quickSend('Who are the top 10 customers by revenue in 2025?')">
-        👥 Top 10 Customers
+        &#128101; Top 10 Customers
         <span class="qb-sub">Ranked by 2025 actual revenue</span>
       </button>
       <button class="quick-btn" onclick="quickSend('Create a scenario reducing the biggest customer by 25% for the full year 2026')">
-        ↓ Biggest Customer −25%
+        &#8595; Biggest Customer -25%
         <span class="qb-sub">Auto-calculates GL impact</span>
       </button>
       <button class="quick-btn" onclick="quickSend('Create a 2026 scenario with +3% revenue across all months')">
-        ↑ Revenue +3% Full Year
+        &#8593; Revenue +3% Full Year
         <span class="qb-sub">All revenue accounts</span>
       </button>
       <button class="quick-btn" onclick="quickSend('Create a 2026 scenario with +5% COGS in Q1 (months 1,2,3)')">
-        ↑ COGS +5% Q1
+        &#8593; COGS +5% Q1
         <span class="qb-sub">January through March</span>
       </button>
       <button class="quick-btn" onclick="quickSend('Create a conservative 2026 scenario: -5% revenue and -3% COGS for the full year')">
-        ↓ Conservative −5% Rev
+        &#8595; Conservative -5% Rev
         <span class="qb-sub">Full year downside</span>
       </button>
     </div>
   </div>
 
-  <!-- ── Zone 2: Scenario Builder (flex, scrollable inside) ── -->
+  <!-- -- Zone 2: Scenario Builder (flex, scrollable inside) -- -->
   <div class="zone-builder" id="builder-section">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Scenario Builder</span>
@@ -1009,21 +1256,21 @@
       </div>
     </div>
 
-    <!-- controls — only visible when there are staged items -->
+    <!-- controls -- only visible when there are staged items -->
     <div class="staged-footer" id="staged-controls" style="display:none">
       <div class="staged-meta" id="staged-id-badge">Next: scenario_id = 3</div>
-      <button class="s-btn preview" onclick="previewImpact()" style="width:100%">◎ Preview GL Impact</button>
+      <button class="s-btn preview" onclick="previewImpact()" style="width:100%">&#9678; Preview GL Impact</button>
       <input type="text" id="scenario-name" class="scenario-name-input"
-             placeholder="Scenario name…" maxlength="50"
+             placeholder="Scenario name..." maxlength="50"
              onkeydown="if(event.key==='Enter') applyScenario()">
       <div class="staged-btn-row">
-        <button class="s-btn ghost" onclick="clearStaged()" style="flex:1">✕ Clear</button>
-        <button class="s-btn amber" onclick="applyScenario()" style="flex:2">⚡ Generate SQL</button>
+        <button class="s-btn ghost" onclick="clearStaged()" style="flex:1">&#10005; Clear</button>
+        <button class="s-btn amber" onclick="applyScenario()" style="flex:2">&#9889; Generate SQL</button>
       </div>
     </div>
   </div>
 
-  <!-- ── Zone 3: Session Stats ── -->
+  <!-- -- Zone 3: Session Stats -- -->
   <div class="zone-stats">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Session</span>
@@ -1040,7 +1287,7 @@
     </div>
   </div>
 
-  <!-- ── Zone 4: Generated Files ── -->
+  <!-- -- Zone 4: Generated Files -- -->
   <div class="zone-files">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Generated SQL Files</span>
@@ -1056,9 +1303,9 @@
 <div class="modal-overlay" id="modal" onclick="closeModal(event)">
   <div class="modal">
     <div class="modal-header">
-      <span class="modal-title" id="modal-title">—</span>
-      <button class="m-btn" onclick="copySQL()">⎘ Copy</button>
-      <button class="m-btn" onclick="document.getElementById('modal').classList.remove('open')">✕ Close</button>
+      <span class="modal-title" id="modal-title">--</span>
+      <button class="m-btn" onclick="copySQL()">&#9112; Copy</button>
+      <button class="m-btn" onclick="document.getElementById('modal').classList.remove('open')">&#10005; Close</button>
     </div>
     <div class="modal-body code-bg"><pre id="modal-content"></pre></div>
   </div>
@@ -1069,14 +1316,14 @@
   <div class="modal" style="width:500px; max-height:68vh">
     <div class="modal-header">
       <span class="modal-title" style="color:var(--accent-dk)">Connect to Power BI Model</span>
-      <button class="m-btn" onclick="closePicker()">✕ Cancel</button>
+      <button class="m-btn" onclick="closePicker()">&#10005; Cancel</button>
     </div>
     <div class="modal-body">
-      <div class="modal-subtitle" id="picker-subtitle">Scanning for open Power BI Desktop instances…</div>
+      <div class="modal-subtitle" id="picker-subtitle">Scanning for open Power BI Desktop instances...</div>
       <div class="model-list" id="model-list"></div>
       <div class="picker-actions">
-        <button class="m-btn" onclick="refreshPicker()">↺ Refresh</button>
-        <button class="m-btn primary" id="picker-connect-btn" onclick="connectSelected()" disabled>Connect ↵</button>
+        <button class="m-btn" onclick="refreshPicker()">&#8634; Refresh</button>
+        <button class="m-btn primary" id="picker-connect-btn" onclick="connectSelected()" disabled>Connect &#8629;</button>
       </div>
     </div>
   </div>
@@ -1088,21 +1335,21 @@
     <div class="modal-header">
       <div class="preview-hd-left">
         <span class="modal-title">GL Impact Preview</span>
-        <div class="preview-summary" id="preview-summary">Loading…</div>
+        <div class="preview-summary" id="preview-summary">Loading...</div>
       </div>
       <div class="preview-tabs">
         <button class="ptab active" id="ptab-pl" onclick="setPreviewTab('pl')">P&L</button>
         <button class="ptab"        id="ptab-cf" onclick="setPreviewTab('cf')">Cashflow</button>
       </div>
       <div class="view-toggle" id="pl-view-toggle">
-        <button class="vt-btn active" id="vt-delta"     onclick="setPreviewMode('delta')">Δ Delta</button>
-        <button class="vt-btn"        id="vt-compare"   onclick="setPreviewMode('compare')">⊟ Compare</button>
-        <button class="vt-btn"        id="vt-waterfall" onclick="setPreviewMode('waterfall')">⊞ Waterfall</button>
+        <button class="vt-btn active" id="vt-delta"     onclick="setPreviewMode('delta')">&#916; Delta</button>
+        <button class="vt-btn"        id="vt-compare"   onclick="setPreviewMode('compare')">&#8863; Compare</button>
+        <button class="vt-btn"        id="vt-waterfall" onclick="setPreviewMode('waterfall')">&#8862; Waterfall</button>
       </div>
-      <button class="m-btn" onclick="closePreview()">✕</button>
+      <button class="m-btn" onclick="closePreview()">&#10005;</button>
     </div>
     <div class="modal-body preview-body" id="preview-body">
-      <div style="padding:48px;text-align:center;color:var(--muted)">Loading…</div>
+      <div style="padding:48px;text-align:center;color:var(--muted)">Loading...</div>
     </div>
   </div>
 </div>
@@ -1113,17 +1360,165 @@
 let msgCount  = 0;
 let currentSQL = "";
 let selectedInstance = null;
+let _modelStatus = "none";  // "none" | "draft" | "confirmed"
+let _activeMainTab = "discovery";
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   const s = await fetch("/api/status").then(r => r.json()).catch(() => null);
   if (s) {
     setStatus(s.connected, s.message);
-    if (s.agent_ready) setStatus(s.connected, s.connected ? "Connected to Power BI" : "Agent ready — click Connect Model");
+    if (s.agent_ready) setStatus(s.connected, s.connected ? "Connected to Power BI" : "Agent ready -- click Data Source");
   }
-  addSystemMsg("dataBobCFO ready. Click ⊕ Connect Model to select a Power BI model.");
+  addSystemMsg("dataBobCFO ready. Click Data Source to connect a Power BI model or upload Excel files.");
+  addDiscoverySystemMsg("Discovery agent ready. Connect a data source, then click Start Discovery to analyze your model.");
   refreshFiles();
   refreshStaged();
+  refreshModelStatus();
+}
+
+// ── Main Tab Switching ─────────────────────────────────────────────────────────
+function switchMainTab(tab) {
+  _activeMainTab = tab;
+  document.getElementById("tab-discovery").classList.toggle("active", tab === "discovery");
+  document.getElementById("tab-scenario").classList.toggle("active", tab === "scenario");
+  document.getElementById("panel-discovery").classList.toggle("active", tab === "discovery");
+  document.getElementById("panel-scenario").classList.toggle("active", tab === "scenario");
+
+  // Show scenario notice if no confirmed understanding
+  if (tab === "scenario") {
+    document.getElementById("scenario-notice").style.display =
+      _modelStatus === "confirmed" ? "none" : "flex";
+  }
+}
+
+// ── Data Source Dropdown ───────────────────────────────────────────────────────
+function toggleDataSourceMenu() {
+  const dd = document.getElementById("ds-dropdown");
+  dd.classList.toggle("open");
+}
+
+// Close dropdown when clicking outside
+document.addEventListener("click", e => {
+  const dd = document.getElementById("ds-dropdown");
+  if (!dd.contains(e.target)) dd.classList.remove("open");
+
+  const modal = document.getElementById("picker-modal");
+  if (e.target === modal) closePicker();
+});
+
+function connectPBI() {
+  document.getElementById("ds-dropdown").classList.remove("open");
+  connect();
+}
+
+function uploadExcel() {
+  document.getElementById("ds-dropdown").classList.remove("open");
+  document.getElementById("excel-file-input").click();
+}
+
+document.getElementById("excel-file-input").addEventListener("change", async function() {
+  const files = this.files;
+  if (!files || !files.length) return;
+
+  const formData = new FormData();
+  for (let i = 0; i < files.length; i++) {
+    formData.append("files", files[i]);
+  }
+
+  setStatus(false, "Uploading Excel files...");
+  const connectBtn = document.getElementById("connect-btn");
+  connectBtn.disabled = true;
+  connectBtn.textContent = "Uploading...";
+
+  try {
+    const r = await fetch("/api/connect/excel", {
+      method: "POST",
+      body: formData
+    }).then(res => res.json());
+
+    connectBtn.disabled = false;
+    connectBtn.textContent = r.ok ? "✓ Connected" : "⊕ Data Source";
+    setStatus(r.ok, r.ok ? (r.message || "Excel files loaded") : (r.message || "Upload failed"));
+    addSystemMsg(r.ok
+      ? `Excel files uploaded successfully. ${r.message || ""}`
+      : `Excel upload failed: ${r.message || "Unknown error"}`);
+    if (r.ok) refreshModelStatus();
+  } catch(e) {
+    connectBtn.disabled = false;
+    connectBtn.textContent = "⊕ Data Source";
+    setStatus(false, "Upload failed: " + e);
+    addSystemMsg("Excel upload failed: " + e);
+  }
+
+  // Reset the file input
+  this.value = "";
+});
+
+// ── Model Status ──────────────────────────────────────────────────────────────
+async function refreshModelStatus() {
+  try {
+    const r = await fetch("/api/model/status").then(res => res.json());
+    if (r.exists && r.status) {
+      _modelStatus = r.status;  // "draft" or "confirmed"
+    } else {
+      _modelStatus = "none";
+    }
+  } catch(e) {
+    _modelStatus = "none";
+  }
+  updateModelStatusUI();
+}
+
+function updateModelStatusUI() {
+  // Header badge
+  const badge = document.getElementById("model-understanding-badge");
+  const text  = document.getElementById("model-understanding-text");
+  badge.className = "model-status-badge " +
+    (_modelStatus === "confirmed" ? "confirmed" : _modelStatus === "draft" ? "draft" : "no-model");
+  text.textContent = _modelStatus === "confirmed" ? "Confirmed" : _modelStatus === "draft" ? "Draft" : "No Model";
+
+  // Discovery header status
+  const dhBadge = document.getElementById("dh-status-badge");
+  dhBadge.className = "dh-status " +
+    (_modelStatus === "confirmed" ? "confirmed" : _modelStatus === "draft" ? "draft" : "no-model");
+  dhBadge.textContent = _modelStatus === "confirmed" ? "Confirmed" : _modelStatus === "draft" ? "Draft" : "No Model";
+
+  // Tab badge
+  const tabBadge = document.getElementById("tab-discovery-badge");
+  if (_modelStatus === "confirmed") {
+    tabBadge.style.display = "inline";
+    tabBadge.className = "tab-badge confirmed";
+    tabBadge.textContent = "CONFIRMED";
+  } else if (_modelStatus === "draft") {
+    tabBadge.style.display = "inline";
+    tabBadge.className = "tab-badge draft";
+    tabBadge.textContent = "DRAFT";
+  } else {
+    tabBadge.style.display = "none";
+  }
+
+  // Scenario notice
+  if (_activeMainTab === "scenario") {
+    document.getElementById("scenario-notice").style.display =
+      _modelStatus === "confirmed" ? "none" : "flex";
+  }
+}
+
+async function refreshModelUnderstanding() {
+  toast("Refreshing model understanding...");
+  try {
+    const r = await fetch("/api/model/refresh", { method: "POST" }).then(res => res.json());
+    if (r.ok) {
+      toast("Model understanding refreshed");
+      addDiscoverySystemMsg("Model understanding has been refreshed.");
+    } else {
+      toast("Refresh failed: " + (r.message || r.error || "unknown"));
+    }
+  } catch(e) {
+    toast("Refresh failed: " + e);
+  }
+  await refreshModelStatus();
 }
 
 // ── Model picker ──────────────────────────────────────────────────────────────
@@ -1138,7 +1533,7 @@ async function refreshPicker() {
   const btn  = document.getElementById("picker-connect-btn");
   selectedInstance = null;
   btn.disabled = true;
-  sub.textContent = "Scanning for open Power BI Desktop instances…";
+  sub.textContent = "Scanning for open Power BI Desktop instances...";
   list.innerHTML  = "";
 
   let res;
@@ -1162,10 +1557,10 @@ async function refreshPicker() {
     return;
   }
 
-  sub.textContent = `${instances.length} model${instances.length > 1 ? "s" : ""} found — select one to connect.`;
+  sub.textContent = `${instances.length} model${instances.length > 1 ? "s" : ""} found -- select one to connect.`;
 
   list.innerHTML = instances.map((inst, i) => {
-    const dbShort = inst.database ? inst.database.slice(0, 8) + "…" : "unknown";
+    const dbShort = inst.database ? inst.database.slice(0, 8) + "..." : "unknown";
     return `<div class="model-item" id="model-item-${i}" onclick="selectModel(${i})">
       <div class="model-name">${escHtml(inst.display_name)}</div>
       <div class="model-meta">localhost:${inst.port}</div>
@@ -1190,11 +1585,11 @@ function selectModel(idx) {
 async function connectSelected() {
   if (!selectedInstance) return;
   const btn = document.getElementById("picker-connect-btn");
-  btn.disabled = true; btn.textContent = "Connecting…";
+  btn.disabled = true; btn.textContent = "Connecting...";
   const connectBtn = document.getElementById("connect-btn");
-  connectBtn.disabled = true; connectBtn.textContent = "Connecting…";
+  connectBtn.disabled = true; connectBtn.textContent = "Connecting...";
   document.getElementById("picker-modal").classList.remove("open");
-  setStatus(false, "Connecting…");
+  setStatus(false, "Connecting...");
 
   const r = await fetch("/api/connect", {
     method:  "POST",
@@ -1206,14 +1601,15 @@ async function connectSelected() {
   }).then(r => r.json()).catch(e => ({ok: false, message: String(e)}));
 
   connectBtn.disabled    = false;
-  connectBtn.textContent = r.ok ? "✓ Connected" : "⊕ Reconnect";
+  connectBtn.textContent = r.ok ? "✓ Connected" : "⊕ Data Source";
   btn.disabled = false; btn.textContent = "Connect ↵";
   setStatus(r.ok, r.ok
-    ? `Connected — ${selectedInstance.display_name}`
+    ? `Connected -- ${selectedInstance.display_name}`
     : r.message);
   addSystemMsg(r.ok
     ? `Connected to "${selectedInstance.display_name}" on port ${selectedInstance.port}`
     : `Connection failed: ${r.message}`);
+  if (r.ok) refreshModelStatus();
 }
 
 function closePicker() {
@@ -1221,17 +1617,12 @@ function closePicker() {
   document.getElementById("connect-btn").disabled = false;
 }
 
-document.addEventListener("click", e => {
-  const modal = document.getElementById("picker-modal");
-  if (e.target === modal) closePicker();
-});
-
 function setStatus(ok, msg) {
   document.getElementById("dot").className = "dot " + (ok ? "connected" : "error");
   document.getElementById("status-text").textContent = msg || (ok ? "Connected" : "Disconnected");
 }
 
-// ── Chat ──────────────────────────────────────────────────────────────────────
+// ── Scenario Chat ─────────────────────────────────────────────────────────────
 async function sendMessage() {
   const inp = document.getElementById("input");
   const msg = inp.value.trim();
@@ -1262,6 +1653,8 @@ async function sendMessage() {
 }
 
 function quickSend(msg) {
+  // Switch to scenario tab for quick actions
+  switchMainTab("scenario");
   document.getElementById("input").value = msg;
   sendMessage();
 }
@@ -1275,7 +1668,7 @@ function autoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 120) + "px";
 }
 
-// ── Messages ──────────────────────────────────────────────────────────────────
+// ── Scenario Messages ─────────────────────────────────────────────────────────
 function addMsg(role, text, sqlPath) {
   const msgs   = document.getElementById("messages");
   const div    = document.createElement("div");
@@ -1296,7 +1689,7 @@ function addMsg(role, text, sqlPath) {
     const fname = sqlPath.split(/[\\/]/).pop();
     const badge = document.createElement("div");
     badge.className = "sql-badge";
-    badge.innerHTML = `<span>◈</span> ${fname}`;
+    badge.innerHTML = `<span>&#9670;</span> ${fname}`;
     badge.onclick   = () => openFile(fname);
     div.appendChild(badge);
   }
@@ -1318,13 +1711,95 @@ function addThinking() {
   const msgs = document.getElementById("messages");
   const div  = document.createElement("div");
   div.className = "thinking";
-  div.innerHTML = `<div class="dots"><span></span><span></span><span></span></div> Thinking…`;
+  div.innerHTML = `<div class="dots"><span></span><span></span><span></span></div> Thinking...`;
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
   return div;
 }
 
-// ── Reset ─────────────────────────────────────────────────────────────────────
+// ── Discovery Chat ────────────────────────────────────────────────────────────
+async function sendDiscoveryMessage() {
+  const inp = document.getElementById("discovery-input");
+  const msg = inp.value.trim();
+  if (!msg) return;
+  inp.value = ""; autoResize(inp);
+
+  addDiscoveryMsg("user", msg);
+
+  const thinking = addDiscoveryThinking();
+
+  const r = await fetch("/api/discovery/chat", {
+    method:  "POST",
+    headers: {"Content-Type": "application/json"},
+    body:    JSON.stringify({message: msg})
+  }).then(r => r.json()).catch(e => ({ok: false, error: String(e)}));
+
+  thinking.remove();
+
+  if (r.ok) {
+    addDiscoveryMsg("agent", r.reply);
+    // Refresh model status after discovery interaction
+    refreshModelStatus();
+  } else {
+    addDiscoveryMsg("agent", "Error: " + (r.error || "Unknown error"));
+  }
+}
+
+function discoveryQuickSend(msg) {
+  document.getElementById("discovery-input").value = msg;
+  sendDiscoveryMessage();
+}
+
+function handleDiscoveryKey(e) {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDiscoveryMessage(); }
+}
+
+function addDiscoveryMsg(role, text) {
+  const msgs = document.getElementById("discovery-messages");
+  const div  = document.createElement("div");
+  div.className = `msg msg-${role}`;
+
+  const label = document.createElement("div");
+  label.className   = "msg-label";
+  label.textContent = role === "user" ? "You" : "Discovery Agent";
+  div.appendChild(label);
+
+  const body = document.createElement("div");
+  body.className   = "msg-text";
+  body.textContent = text;
+  div.appendChild(body);
+
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function addDiscoverySystemMsg(text) {
+  const msgs = document.getElementById("discovery-messages");
+  const div  = document.createElement("div");
+  div.className   = "msg msg-system";
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function addDiscoveryThinking() {
+  const msgs = document.getElementById("discovery-messages");
+  const div  = document.createElement("div");
+  div.className = "thinking";
+  div.innerHTML = `<div class="dots"><span></span><span></span><span></span></div> Analyzing...`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+async function resetDiscoveryChat() {
+  await fetch("/api/discovery/reset", {method: "POST"});
+  document.getElementById("discovery-messages").innerHTML = "";
+  addDiscoverySystemMsg("Discovery conversation reset.");
+  refreshModelStatus();
+}
+
+// ── Reset (Scenario) ──────────────────────────────────────────────────────────
 async function resetChat() {
   await fetch("/api/reset", {method: "POST"});
   document.getElementById("messages").innerHTML = "";
@@ -1351,7 +1826,7 @@ async function refreshFiles() {
       <div class="file-dot"></div>
       <div class="file-info">
         <div class="file-name">${f.name}</div>
-        <div class="file-meta">${kb} KB · ${dt}</div>
+        <div class="file-meta">${kb} KB &middot; ${dt}</div>
       </div>
     </div>`;
   }).join("");
@@ -1426,12 +1901,12 @@ async function refreshStaged() {
       const sign  = adj.pct_change >= 0 ? "+" : "";
       const cls   = adj.pct_change >= 0 ? "pos" : "neg";
       const mon   = adj.months && adj.months.length
-        ? " · M" + adj.months.join(",")
-        : " · full yr";
+        ? " &middot; M" + adj.months.join(",")
+        : " &middot; full yr";
       return `<span class="staged-tag ${cls}">${sign}${adj.pct_change}% ${adj.account_group}${mon}</span>`;
     }).join("");
     return `<div class="staged-item">
-      <button class="staged-remove" onclick="removeStep(${i})" title="Remove step">✕</button>
+      <button class="staged-remove" onclick="removeStep(${i})" title="Remove step">&#10005;</button>
       <div class="staged-step-row">
         <span class="staged-step">Step ${i + 1}</span>
       </div>
@@ -1465,6 +1940,7 @@ async function applyScenario() {
     nameEl.focus();
     return;
   }
+  switchMainTab("scenario");
   document.getElementById("input").value = `Generate the SQL now. Name this scenario "${name}".`;
   nameEl.value = "";
   sendMessage();
@@ -1479,13 +1955,13 @@ let _collapsedGroups  = new Set();  // numeric keys of currently-collapsed group
 async function previewImpact() {
   _previewData = null;
   document.getElementById("preview-modal").classList.add("open");
-  document.getElementById("preview-summary").textContent = "Loading…";
+  document.getElementById("preview-summary").textContent = "Loading...";
   document.getElementById("preview-body").innerHTML =
     `<div style="padding:56px;text-align:center;color:var(--muted);font-size:13px">
        <div class="dots" style="justify-content:center;margin-bottom:12px">
          <span></span><span></span><span></span>
        </div>
-       Computing impact…
+       Computing impact...
      </div>`;
 
   const r = await fetch("/api/scenario/preview")
@@ -1517,7 +1993,7 @@ function setPreviewMode(mode, rerender = true) {
   }
 }
 
-// P&L reporting groups — everything else is BS/CF
+// P&L reporting groups -- fallback constant; server may provide dynamic list
 const PL_GROUPS = new Set([
   "Umsatz", "Warenaufwand", "Bezugskosten", "Fakturierte Nebenerlöse",
   "Erlösminderungen", "Personalaufwand", "Raumaufwand", "Energieaufwand",
@@ -1529,8 +2005,13 @@ const PL_GROUPS = new Set([
 function renderPreview() {
   const { months, accounts, totals } = _previewData;
 
+  // Use dynamic pl_groups from server if available, otherwise fallback
+  const plGroupSet = _previewData.pl_groups
+    ? new Set(_previewData.pl_groups)
+    : PL_GROUPS;
+
   // Filter to P&L accounts only for this view
-  const plAccounts = accounts.filter(a => PL_GROUPS.has(a.grp));
+  const plAccounts = accounts.filter(a => plGroupSet.has(a.grp));
 
   // ── Summary line (P&L only) ───────────────────────────────────────────────
   const changedAccs   = plAccounts.filter(a => Math.abs(a.total.delta) >= 0.5).length;
@@ -1543,16 +2024,16 @@ function renderPreview() {
     scenario: plAccounts.reduce((s, a) => s + a.total.scenario, 0),
     delta:    plAccounts.reduce((s, a) => s + a.total.delta, 0),
   };
-  const sign = plGrand.delta >= 0 ? "+" : "−";
+  const sign = plGrand.delta >= 0 ? "+" : "\u2212";
   const cls  = plGrand.delta >= 0 ? "pos" : "neg";
   document.getElementById("preview-summary").innerHTML =
     `P&L impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(plGrand.delta))}</span>` +
-    ` &nbsp;·&nbsp; ${changedAccs} of ${plAccounts.length} accounts changed` +
-    ` &nbsp;·&nbsp; ${changedMonths} of ${months.length} months`;
+    ` &nbsp;&middot;&nbsp; ${changedAccs} of ${plAccounts.length} accounts changed` +
+    ` &nbsp;&middot;&nbsp; ${changedMonths} of ${months.length} months`;
 
   // ── Group P&L accounts by grp (preserve first-seen order) ─────────────────
   const groups = [];
-  const grpMap = new Map();   // label → {label, key(int), accounts[]}
+  const grpMap = new Map();   // label -> {label, key(int), accounts[]}
   for (const acc of plAccounts) {
     const label = acc.grp || "Other";
     if (!grpMap.has(label)) {
@@ -1606,7 +2087,7 @@ function renderPreview() {
     h += `<tr class="grow${collapsed ? " collapsed" : ""}" data-grp="${grp.key}">`;
     h += `<td class="pt-ac" onclick="toggleGroup(${grp.key})">
       <div class="grp-hd-inner">
-        <span class="grp-chevron">▼</span>
+        <span class="grp-chevron">&#9660;</span>
         <span class="grp-name">${escHtml(grp.label)}</span>
         <span class="grp-count">${grp.accounts.length}</span>
         ${deltaBadge}
@@ -1660,7 +2141,7 @@ function ptCell(cell, mode, extraCls) {
   if (mode === "delta") {
     const cls = changed ? pn : "zero";
     return `<td class="pt-d ${extraCls} ${changed ? "chg" : ""} ${cls}">${
-      changed ? fmtDelta(cell.delta) : "—"
+      changed ? fmtDelta(cell.delta) : "\u2014"
     }</td>`;
   } else {
     // compare: orig / scenario / delta stacked
@@ -1678,11 +2159,11 @@ function n0(v) {
 }
 /** Format number with sign for negatives only. */
 function n0s(v) {
-  return (v < 0 ? "−" : "") + n0(v);
+  return (v < 0 ? "\u2212" : "") + n0(v);
 }
-/** Format delta always with + or − sign. */
+/** Format delta always with + or - sign. */
 function fmtDelta(v) {
-  return (v >= 0 ? "+" : "−") + n0(v);
+  return (v >= 0 ? "+" : "\u2212") + n0(v);
 }
 
 /** Toggle expand/collapse of a group row without a full re-render. */
@@ -1701,7 +2182,7 @@ function toggleGroup(key) {
   if (hdr) hdr.classList.toggle("collapsed", !isCollapsed);
 }
 
-/** Render a delta-bridge waterfall: Original → per-group deltas → Scenario (P&L only). */
+/** Render a delta-bridge waterfall: Original -> per-group deltas -> Scenario (P&L only). */
 function renderWaterfall(groups) {
   // Compute P&L-only grand from the already-filtered groups
   const plGrandOrig = groups.reduce((s, g) => s + g.total.original, 0);
@@ -1709,7 +2190,7 @@ function renderWaterfall(groups) {
   // Only groups with a material change
   const changed = groups.filter(g => Math.abs(g.total.delta) >= 0.5);
 
-  // Build bars: Original → deltas → Scenario
+  // Build bars: Original -> deltas -> Scenario
   const bars = [];
   const origVal = plGrandOrig;
   bars.push({ label: 'Original', value: origVal, from: 0, to: origVal, type: 'anchor' });
@@ -1780,7 +2261,7 @@ function renderWaterfall(groups) {
       fill="${col}" opacity="${b.type === 'anchor' ? 0.92 : 0.82}" class="wf-bar">
       <title>${escHtml(b.label)}: CHF ${n0s(b.value)}</title></rect>`;
 
-    // Value label — anchors show absolute, deltas show signed change
+    // Value label -- anchors show absolute, deltas show signed change
     const above  = b.type !== 'neg';
     const valY   = above ? yt - 7 : yb + 13;
     let valTxt;
@@ -1859,7 +2340,7 @@ function renderCashflowPreview() {
   if (!cf || !cf.length) {
     document.getElementById("preview-body").innerHTML =
       `<div style="padding:48px;text-align:center;color:var(--muted);font-size:13px">
-         Cashflow structure not available — ensure Power BI is connected.
+         Cashflow structure not available -- ensure Power BI is connected.
        </div>`;
     return;
   }
@@ -1889,7 +2370,7 @@ function renderCashflowPreview() {
   // CF summary line
   const cfTotal = cf.find(r => r.sort === 28) || cf[cf.length - 1];
   if (cfTotal) {
-    const sign = cfTotal.delta >= 0 ? "+" : "−";
+    const sign = cfTotal.delta >= 0 ? "+" : "\u2212";
     const cls  = cfTotal.delta >= 0 ? "pos" : "neg";
     document.getElementById("preview-summary").innerHTML =
       `Net cash impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(cfTotal.delta))}</span>`;
@@ -1914,9 +2395,9 @@ function renderCashflowPreview() {
     if (mode === "compare") {
       h += `<td>${n0s(row.original)}</td>`;
       h += `<td class="${zero ? '' : pn}">${n0s(row.scenario)}</td>`;
-      h += `<td class="${zero ? '' : pn}">${zero ? '—' : fmtDelta(row.delta)}</td>`;
+      h += `<td class="${zero ? '' : pn}">${zero ? '\u2014' : fmtDelta(row.delta)}</td>`;
     } else {
-      const valTxt = zero ? "—" : fmtDelta(row.delta);
+      const valTxt = zero ? "\u2014" : fmtDelta(row.delta);
       h += `<td class="${zero ? '' : pn}">${valTxt}</td>`;
     }
     h += `</tr>`;
@@ -1937,6 +2418,7 @@ function closePreviewOverlay(e) {
 init();
 setInterval(refreshFiles,  10000);
 setInterval(refreshStaged,  5000);
+setInterval(refreshModelStatus, 15000);
 </script>
 </body>
 </html>
