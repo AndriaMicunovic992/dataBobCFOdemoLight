@@ -1684,23 +1684,13 @@ function switchMainTab(tab) {
   }
 }
 
-// ── Data Source Dropdown ───────────────────────────────────────────────────────
-function toggleDataSourceMenu() {
-  const dd = document.getElementById("ds-dropdown");
-  dd.classList.toggle("open");
-}
-
-// Close dropdown when clicking outside
+// Close picker modal when clicking outside
 document.addEventListener("click", e => {
-  const dd = document.getElementById("ds-dropdown");
-  if (!dd.contains(e.target)) dd.classList.remove("open");
-
   const modal = document.getElementById("picker-modal");
   if (e.target === modal) closePicker();
 });
 
 function connectPBI() {
-  document.getElementById("ds-dropdown").classList.remove("open");
   connect();
 }
 
@@ -1718,9 +1708,6 @@ document.getElementById("excel-file-input").addEventListener("change", async fun
   }
 
   setStatus(false, "Uploading Excel files...");
-  const connectBtn = document.getElementById("connect-btn");
-  connectBtn.disabled = true;
-  connectBtn.textContent = "Uploading...";
 
   try {
     const r = await fetch("/api/connect/excel", {
@@ -1728,8 +1715,6 @@ document.getElementById("excel-file-input").addEventListener("change", async fun
       body: formData
     }).then(res => res.json());
 
-    connectBtn.disabled = false;
-    connectBtn.textContent = r.ok ? "✓ Connected" : "⊕ Data Source";
     setStatus(r.ok, r.ok ? (r.message || "Excel files loaded") : (r.message || "Upload failed"));
     addSystemMsg(r.ok
       ? `Excel files uploaded successfully. ${r.message || ""}`
@@ -1741,8 +1726,6 @@ document.getElementById("excel-file-input").addEventListener("change", async fun
       handleConnectModelResponse(r, firstName);
     }
   } catch(e) {
-    connectBtn.disabled = false;
-    connectBtn.textContent = "⊕ Data Source";
     setStatus(false, "Upload failed: " + e);
     addSystemMsg("Excel upload failed: " + e);
   }
@@ -2461,8 +2444,6 @@ async function connectSelected() {
   if (!selectedInstance) return;
   const btn = document.getElementById("picker-connect-btn");
   btn.disabled = true; btn.textContent = "Connecting...";
-  const connectBtn = document.getElementById("connect-btn");
-  connectBtn.disabled = true; connectBtn.textContent = "Connecting...";
   document.getElementById("picker-modal").classList.remove("open");
   setStatus(false, "Connecting...");
 
@@ -2475,9 +2456,7 @@ async function connectSelected() {
     })
   }).then(r => r.json()).catch(e => ({ok: false, message: String(e)}));
 
-  connectBtn.disabled    = false;
-  connectBtn.textContent = r.ok ? "✓ Connected" : "⊕ Data Source";
-  btn.disabled = false; btn.textContent = "Connect ↵";
+  btn.disabled = false; btn.textContent = "Connect \u21b5";
   setStatus(r.ok, r.ok
     ? `Connected -- ${selectedInstance.display_name}`
     : r.message);
@@ -2492,7 +2471,6 @@ async function connectSelected() {
 
 function closePicker() {
   document.getElementById("picker-modal").classList.remove("open");
-  document.getElementById("connect-btn").disabled = false;
 }
 
 function setStatus(ok, msg) {
