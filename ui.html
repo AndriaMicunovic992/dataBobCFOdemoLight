@@ -727,6 +727,13 @@
     text-transform: uppercase; letter-spacing: 0.06em;
   }
   .mo-edit:hover { background: var(--accent-lt); border-color: rgba(106,187,217,0.3); }
+  .mo-add {
+    margin-left: auto; font-size: 16px; line-height: 1; color: var(--accent);
+    cursor: pointer; font-weight: 600; padding: 2px 6px;
+    border-radius: 3px; border: 1px solid transparent;
+    background: none; font-family: inherit;
+  }
+  .mo-add:hover { background: var(--accent-lt); border-color: rgba(106,187,217,0.3); }
   .mo-item {
     padding: 4px 8px; font-size: 11.5px; color: var(--text2);
     border-left: 2px solid var(--border); margin: 2px 0;
@@ -1494,14 +1501,18 @@
   </div>
 </div>
 
-<!-- ════ MODEL PICKER MODAL ════ -->
+<!-- ════ ADD DATA SOURCE MODAL ════ -->
 <div class="modal-overlay" id="picker-modal">
   <div class="modal" style="width:500px; max-height:68vh">
     <div class="modal-header">
-      <span class="modal-title" style="color:var(--accent-dk)">Connect to Power BI Model</span>
+      <span class="modal-title" style="color:var(--accent-dk)">Add Data Source</span>
       <button class="m-btn" onclick="closePicker()">&#10005; Cancel</button>
     </div>
     <div class="modal-body">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="m-btn primary" onclick="uploadExcel(); closePicker()" style="flex:1">&#128196; Upload Excel</button>
+      </div>
+      <div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Open Semantic Model (Power BI Desktop)</div>
       <div class="modal-subtitle" id="picker-subtitle">Scanning for open Power BI Desktop instances...</div>
       <div class="model-list" id="model-list"></div>
       <div class="picker-actions">
@@ -1694,7 +1705,6 @@ function connectPBI() {
 }
 
 function uploadExcel() {
-  document.getElementById("ds-dropdown").classList.remove("open");
   document.getElementById("excel-file-input").click();
 }
 
@@ -1837,7 +1847,7 @@ async function refreshModelOverview() {
       // Show sources section with + button even when no model data exists
       container.innerHTML = `<div class="mo-section">
         <div class="mo-section-hd">Sources
-          <button class="mo-edit" onclick="addModelSource()">+</button>
+          <button class="mo-add" onclick="addModelSource()">+</button>
         </div>
         <div class="mo-source-item" style="color:var(--muted);font-size:10px">No sources linked</div>
       </div>
@@ -1846,7 +1856,7 @@ async function refreshModelOverview() {
   } catch(e) {
     container.innerHTML = `<div class="mo-section">
       <div class="mo-section-hd">Sources
-        <button class="mo-edit" onclick="addModelSource()">+</button>
+        <button class="mo-add" onclick="addModelSource()">+</button>
       </div>
       <div class="mo-source-item" style="color:var(--muted);font-size:10px">No sources linked</div>
     </div>`;
@@ -1864,7 +1874,7 @@ function renderModelOverview(d, container) {
   // Sources
   html += `<div class="mo-section">
     <div class="mo-section-hd">Sources
-      <button class="mo-edit" onclick="addModelSource()">+</button>
+      <button class="mo-add" onclick="addModelSource()">+</button>
     </div>`;
   if (d.sources && d.sources.length) {
     for (const s of d.sources) {
@@ -2407,12 +2417,18 @@ async function refreshPicker() {
   const instances = res.instances || [];
 
   if (!instances.length) {
-    sub.textContent = "No open models found.";
-    list.innerHTML  = `<div class="picker-empty">
-      No Power BI Desktop models detected.<br>
-      Make sure Power BI Desktop is open with a model loaded,<br>
-      then click <strong>Refresh</strong>.
-    </div>`;
+    if (res.ok === false && res.error) {
+      // Show the actual server error (e.g. POWERBI_MCP_EXE not configured)
+      sub.textContent = "Configuration issue";
+      list.innerHTML = `<div class="picker-empty">${escHtml(res.error)}</div>`;
+    } else {
+      sub.textContent = "No open models found.";
+      list.innerHTML  = `<div class="picker-empty">
+        No Power BI Desktop models detected.<br>
+        Make sure Power BI Desktop is open with a model loaded,<br>
+        then click <strong>Refresh</strong>.
+      </div>`;
+    }
     return;
   }
 
