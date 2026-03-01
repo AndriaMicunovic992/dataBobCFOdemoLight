@@ -695,6 +695,62 @@
   .file-meta { font-size: 9.5px; color: var(--muted); margin-top: 2px; }
   .no-files { font-size: 11px; color: var(--muted); text-align: center; padding: 20px 0; font-style: italic; }
 
+  /* --- Model Overview sidebar zone --- */
+  .zone-model-overview {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #model-overview-content {
+    flex: 1 1 0;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  #model-overview-content::-webkit-scrollbar { width: 3px; }
+  #model-overview-content::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .mo-section { margin-bottom: 10px; }
+  .mo-section-hd {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 0 4px;
+    font-size: 10px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .mo-edit {
+    margin-left: auto; font-size: 9px; color: var(--accent);
+    cursor: pointer; font-weight: 600; padding: 2px 6px;
+    border-radius: 3px; border: 1px solid transparent;
+    background: none; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .mo-edit:hover { background: var(--accent-lt); border-color: rgba(106,187,217,0.3); }
+  .mo-item {
+    padding: 4px 8px; font-size: 11.5px; color: var(--text2);
+    border-left: 2px solid var(--border); margin: 2px 0;
+  }
+  .mo-item.fact { border-left-color: var(--amber); }
+  .mo-item.dim  { border-left-color: var(--accent); }
+  .mo-item.rel  { border-left-color: var(--green); }
+  .mo-item-name { font-weight: 600; font-size: 11px; }
+  .mo-item-desc { font-size: 10px; color: var(--muted); }
+  .mo-badge {
+    display: inline-block; font-size: 9px; padding: 1px 5px;
+    border-radius: 3px; font-weight: 600;
+  }
+  .mo-badge.ok      { background: rgba(39,168,130,0.12); color: var(--green); }
+  .mo-badge.missing { background: rgba(208,64,96,0.1);   color: var(--red); }
+  .mo-desc {
+    font-size: 11.5px; color: var(--text2); padding: 4px 0 8px;
+    border-bottom: 1px solid var(--border); margin-bottom: 6px;
+  }
+  .mo-source-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 8px; font-size: 11px; margin: 2px 0;
+  }
+  .mo-source-dot { width: 5px; height: 5px; border-radius: 50%; }
+  .mo-source-dot.on  { background: var(--green); }
+  .mo-source-dot.off { background: var(--muted); }
+
   /* --- Generic sidebar buttons --- */
   .s-btn {
     padding: 7px 12px;
@@ -712,6 +768,8 @@
   .s-btn.amber:hover  { background: #bb7a0b; border-color: #bb7a0b; }
   .s-btn.ghost  { border-color: rgba(208,64,96,0.30); color: var(--red); background: transparent; }
   .s-btn.ghost:hover  { background: var(--red-lt); border-color: var(--red); }
+  .s-btn.green  { background: rgba(39,168,130,0.12); color: var(--green); border-color: rgba(39,168,130,0.25); }
+  .s-btn.green:hover { background: var(--green); color: #fff; }
   .s-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 
@@ -1255,6 +1313,8 @@
     <div class="discovery-header">
       <span class="dh-label">Discovery Agent — explore and understand your data model</span>
       <span class="dh-status no-model" id="dh-status-badge">No Model</span>
+      <button class="s-btn green" id="dh-confirm-btn" style="display:none"
+              onclick="toggleModelConfirmation()">&#10003; Confirm</button>
       <button class="s-btn" onclick="refreshModelUnderstanding()" title="Refresh model understanding">&#8634; Refresh</button>
       <button class="s-btn ghost" onclick="resetDiscoveryChat()" title="Reset discovery chat">&#10005; Reset</button>
     </div>
@@ -1291,8 +1351,19 @@
 <!-- ════ SIDEBAR ════ -->
 <aside>
 
+  <!-- -- Model Overview (visible in Data Understanding tab) -- -->
+  <div class="zone-model-overview" id="sidebar-model-overview" style="display:none">
+    <div class="zone-hd zone-bd">
+      <span class="zone-title">Model Overview</span>
+      <button class="s-btn" onclick="refreshModelOverview()" style="padding:3px 8px;font-size:10px">&#8634;</button>
+    </div>
+    <div id="model-overview-content" style="padding:8px 10px;">
+      <div class="no-staged" style="padding:16px 0;">Connect a data source and run discovery to see model details here.</div>
+    </div>
+  </div>
+
   <!-- -- Zone 1: Quick Actions -- -->
-  <div class="zone-quick">
+  <div class="zone-quick" id="sidebar-quick-actions">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Quick Actions</span>
     </div>
@@ -1353,7 +1424,7 @@
   </div>
 
   <!-- -- Zone 3: Session Stats -- -->
-  <div class="zone-stats">
+  <div class="zone-stats" id="sidebar-stats">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Session</span>
     </div>
@@ -1370,7 +1441,7 @@
   </div>
 
   <!-- -- Zone 4: Generated Files -- -->
-  <div class="zone-files">
+  <div class="zone-files" id="sidebar-files">
     <div class="zone-hd zone-bd">
       <span class="zone-title">Generated SQL Files</span>
     </div>
@@ -1536,6 +1607,19 @@ function switchMainTab(tab) {
   document.getElementById("panel-discovery").classList.toggle("active", tab === "discovery");
   document.getElementById("panel-scenario").classList.toggle("active", tab === "scenario");
 
+  const isScenario = tab === "scenario";
+
+  // Scenario-only sidebar zones
+  document.getElementById("sidebar-quick-actions").style.display = isScenario ? "" : "none";
+  document.getElementById("builder-section").style.display = isScenario ? "" : "none";
+  document.getElementById("sidebar-stats").style.display = isScenario ? "" : "none";
+  document.getElementById("sidebar-files").style.display = isScenario ? "" : "none";
+
+  // Discovery-only sidebar zone
+  document.getElementById("sidebar-model-overview").style.display = isScenario ? "none" : "";
+
+  if (!isScenario) refreshModelOverview();
+
   // Show scenario notice if no confirmed understanding
   if (tab === "scenario") {
     document.getElementById("scenario-notice").style.display =
@@ -1659,6 +1743,185 @@ function updateModelStatusUI() {
     document.getElementById("scenario-notice").style.display =
       _modelStatus === "confirmed" ? "none" : "flex";
   }
+
+  // Confirm / Revert button
+  const confirmBtn = document.getElementById("dh-confirm-btn");
+  if (confirmBtn) {
+    if (_modelStatus === "draft") {
+      confirmBtn.style.display = "";
+      confirmBtn.innerHTML = "&#10003; Confirm";
+      confirmBtn.className = "s-btn green";
+    } else if (_modelStatus === "confirmed") {
+      confirmBtn.style.display = "";
+      confirmBtn.innerHTML = "&#8634; Revert to Draft";
+      confirmBtn.className = "s-btn ghost";
+    } else {
+      confirmBtn.style.display = "none";
+    }
+  }
+}
+
+// ── User-controlled model status toggle ──────────────────────────────────────
+async function toggleModelConfirmation() {
+  const newStatus = _modelStatus === "confirmed" ? "draft" : "confirmed";
+  try {
+    const r = await fetch("/api/model/status", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ status: newStatus })
+    }).then(res => res.json());
+    if (r.ok) {
+      toast(newStatus === "confirmed" ? "Model confirmed!" : "Model reverted to draft");
+      await refreshModelStatus();
+    } else {
+      toast("Failed: " + (r.error || "unknown"));
+    }
+  } catch(e) { toast("Error: " + e); }
+}
+
+// ── Model Overview sidebar panel ─────────────────────────────────────────────
+async function refreshModelOverview() {
+  const container = document.getElementById("model-overview-content");
+  if (!container) return;
+  try {
+    const r = await fetch("/api/model/overview").then(res => res.json());
+    if (r.ok && r.data) {
+      renderModelOverview(r.data, container);
+    } else {
+      container.innerHTML = '<div class="no-staged" style="padding:16px 0;">No model understanding available yet.</div>';
+    }
+  } catch(e) {
+    container.innerHTML = '<div class="no-staged" style="padding:16px 0;">Could not load model overview.</div>';
+  }
+}
+
+function renderModelOverview(d, container) {
+  let html = '';
+
+  // Description
+  if (d.description) {
+    html += `<div class="mo-desc">${escHtml(d.description)}</div>`;
+  }
+
+  // Sources
+  if (d.sources && d.sources.length) {
+    html += `<div class="mo-section">
+      <div class="mo-section-hd">Sources</div>`;
+    for (const s of d.sources) {
+      const dot = s.connected ? 'on' : 'off';
+      const icon = s.source_type === 'pbi_desktop' ? '&#128202;' : '&#128196;';
+      html += `<div class="mo-source-item">
+        <span class="mo-source-dot ${dot}"></span>
+        ${icon} ${escHtml(s.label)}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Fact Tables
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Fact Tables
+      <button class="mo-edit" onclick="editModelSection('fact_tables')">Edit</button>
+    </div>`;
+  if (d.fact_tables && d.fact_tables.length) {
+    for (const t of d.fact_tables) {
+      html += `<div class="mo-item fact">
+        <div class="mo-item-name">${escHtml(t.name)}</div>
+        ${t.description ? `<div class="mo-item-desc">${escHtml(t.description)}</div>` : ''}
+      </div>`;
+    }
+  } else {
+    html += `<div class="mo-item"><span class="mo-badge missing">Not set</span></div>`;
+  }
+  html += `</div>`;
+
+  // Dimension Tables
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Dimensions
+      <button class="mo-edit" onclick="editModelSection('dimensions')">Edit</button>
+    </div>`;
+  if (d.dimension_tables && d.dimension_tables.length) {
+    for (const t of d.dimension_tables) {
+      html += `<div class="mo-item dim">
+        <div class="mo-item-name">${escHtml(t.name)}</div>
+        ${t.description ? `<div class="mo-item-desc">${escHtml(t.description)}</div>` : ''}
+      </div>`;
+    }
+  } else {
+    html += `<div class="mo-item"><span class="mo-badge missing">Not set</span></div>`;
+  }
+  html += `</div>`;
+
+  // Relationships
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Relationships
+      <button class="mo-edit" onclick="editModelSection('relationships')">Edit</button>
+    </div>`;
+  if (d.relationships && d.relationships.length) {
+    for (const r of d.relationships) {
+      html += `<div class="mo-item rel">
+        <div class="mo-item-desc">${escHtml(r.from_table)}.${escHtml(r.from_column)} &rarr; ${escHtml(r.to_table)}.${escHtml(r.to_column)}</div>
+      </div>`;
+    }
+  } else {
+    html += `<div class="mo-item"><span class="mo-badge missing">None</span></div>`;
+  }
+  html += `</div>`;
+
+  // Query Templates
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Query Templates
+      <button class="mo-edit" onclick="editModelSection('queries')">Edit</button>
+    </div>`;
+  if (d.query_templates && d.query_templates.length) {
+    for (const q of d.query_templates) {
+      html += `<div class="mo-item"><div class="mo-item-name">${escHtml(q)}</div></div>`;
+    }
+  } else {
+    html += `<div class="mo-item"><span class="mo-badge missing">Auto-generated</span></div>`;
+  }
+  html += `</div>`;
+
+  // Account Structure
+  html += `<div class="mo-section">
+    <div class="mo-section-hd">Account Structure
+      <button class="mo-edit" onclick="editModelSection('accounts')">Edit</button>
+    </div>
+    <div class="mo-item">
+      <span class="mo-badge ${d.has_account_structure ? 'ok' : 'missing'}">
+        ${d.has_account_structure ? 'Configured' : 'Not set'}
+      </span>
+    </div>
+  </div>`;
+
+  // Filters
+  if (d.filter_dimensions && d.filter_dimensions.length) {
+    html += `<div class="mo-section">
+      <div class="mo-section-hd">Filters
+        <button class="mo-edit" onclick="editModelSection('filters')">Edit</button>
+      </div>`;
+    for (const f of d.filter_dimensions) {
+      html += `<div class="mo-item"><div class="mo-item-name">${escHtml(f)}</div></div>`;
+    }
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function editModelSection(section) {
+  // Switch to discovery tab and send a relevant prompt
+  switchMainTab("discovery");
+  const prompts = {
+    fact_tables:    "Review and update the fact tables in the model understanding. Which tables contain the main transactional data?",
+    dimensions:     "Review and update the dimension tables. Which tables provide lookup/reference data for the fact tables?",
+    relationships:  "Review and update the relationships between tables. How are the fact and dimension tables connected?",
+    queries:        "Review and regenerate the query templates (fetch_budget and fetch_account_map). Test them to ensure they work correctly.",
+    accounts:       "Review and update the account structure. Which column groups define revenue, COGS, and other P&L categories?",
+    filters:        "Review and update the filter dimensions. Which columns should be used to filter data (e.g., company, department)?",
+  };
+  const prompt = prompts[section] || "Review the model understanding and suggest improvements.";
+  discoveryQuickSend(prompt);
 }
 
 async function refreshModelUnderstanding() {
@@ -1897,8 +2160,9 @@ async function sendDiscoveryMessage() {
 
   if (r.ok) {
     addDiscoveryMsg("agent", r.reply);
-    // Refresh model status after discovery interaction
+    // Refresh model status and overview after discovery interaction
     refreshModelStatus();
+    if (_activeMainTab !== "scenario") refreshModelOverview();
   } else {
     addDiscoveryMsg("agent", "Error: " + (r.error || "Unknown error"));
   }
@@ -2123,9 +2387,18 @@ async function previewImpact() {
        Computing impact...
      </div>`;
 
-  const r = await fetch("/api/scenario/preview")
-    .then(res => res.json())
-    .catch(e => ({ ok: false, error: String(e) }));
+  let r;
+  try {
+    const res = await fetch("/api/scenario/preview");
+    if (!res.ok) {
+      try { r = await res.json(); }
+      catch { r = { ok: false, error: `Server error (${res.status})` }; }
+    } else {
+      r = await res.json();
+    }
+  } catch(e) {
+    r = { ok: false, error: "Network error: " + String(e) };
+  }
 
   if (!r.ok) {
     document.getElementById("preview-body").innerHTML =
@@ -2673,12 +2946,22 @@ async function activateModel(modelId) {
       setCurrentModel(modelId, r.model ? r.model.name : null);
       if (!_currentModelName && r.model) _currentModelName = r.model.name;
       updateActiveModelDisplay();
-      setStatus(true, `Model "${_currentModelName || modelId}" activated`);
-      addSystemMsg(`Model "${_currentModelName || modelId}" activated.` +
-        (r.has_understanding ? " Understanding loaded." : " No understanding yet -- go to Data Understanding."));
+      let statusMsg = `Model "${_currentModelName || modelId}" activated`;
+      if (r.reconnected) {
+        statusMsg += " — data source reconnected";
+        setStatus(true, statusMsg);
+      } else if (r.connected) {
+        setStatus(true, statusMsg);
+      } else {
+        setStatus(false, statusMsg + " (no source connected)");
+      }
+      let sysMsg = `Model "${_currentModelName || modelId}" activated.`;
+      if (r.reconnected) sysMsg += " Data source reconnected.";
+      sysMsg += r.has_understanding ? " Understanding loaded." : " No understanding yet — go to Data Understanding.";
+      addSystemMsg(sysMsg);
       refreshModelStatus();
       closeModelsModal();
-      toast("Model activated");
+      toast(r.reconnected ? "Model activated & source reconnected" : "Model activated");
     } else {
       toast("Failed to activate: " + (r.message || r.error || "unknown"));
     }

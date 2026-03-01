@@ -235,8 +235,9 @@ Use get_sample_data to inspect table contents. Fix and re-test until it works.
 == RULES ==
 - Always start with extract_schema before asking questions.
 - Be concise — ask 2-3 questions at a time.
-- Save understanding when you have enough info (even partial — status="draft").
-- Mark status="confirmed" only when the user explicitly confirms.
+- Save understanding when you have enough info (always with status="draft").
+- NEVER set status="confirmed" — the user will confirm via the UI button when ready.
+- When the understanding is complete, tell the user: "The model understanding looks ready. You can confirm it using the Confirm button."
 - If the user corrects something, update and re-save.
 - Focus on what the scenario agent needs: fact table, accounts, amounts, dates, groups, QUERY TEMPLATES.
 - **Never save without working query_templates.** The scenario agent is useless without them.

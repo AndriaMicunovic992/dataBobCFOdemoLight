@@ -72,6 +72,55 @@ def _init_agents(source: DataSource, mu: ModelUnderstanding | None = None,
     _scenario_agent = Agent(source, mu)
 
 
+def _try_reconnect_sources(model_id: str) -> DataSource | None:
+    """Attempt to reconnect to a model's data sources. Returns DataSource or None."""
+    sources = _storage.get_model_sources(model_id)
+    for src in sources:
+        src_type = src.get("source_type", "")
+        source_id = src.get("source_id", "")
+
+        if src_type == "pbi_desktop":
+            db_guid = source_id.replace("pbi:", "") if source_id.startswith("pbi:") else ""
+            if not db_guid:
+                continue
+            try:
+                from config import POWERBI_EXE
+                instances = _run(list_pbi_instances(POWERBI_EXE))
+                for inst in instances:
+                    if inst.get("database", "") == db_guid:
+                        pbi_src = PBIDesktopSource(POWERBI_EXE)
+                        _run(pbi_src.connect(
+                            connection_string=inst["connection_string"],
+                            database=db_guid
+                        ))
+                        print(f"[Reconnect] PBI matched: {inst.get('display_name')}")
+                        return pbi_src
+            except Exception as e:
+                print(f"[Reconnect] PBI scan failed: {e}")
+
+        elif src_type == "excel":
+            try:
+                file_paths = []
+                with _storage._conn() as con:
+                    rows = con.execute(
+                        "SELECT file_path FROM uploaded_files WHERE model_id = ?",
+                        (model_id,)
+                    ).fetchall()
+                for row in rows:
+                    p = Path(row[0])
+                    if p.exists():
+                        file_paths.append(str(p))
+                if file_paths:
+                    excel_src = create_datasource("excel")
+                    _run(excel_src.connect(files=file_paths))
+                    print(f"[Reconnect] Excel: {len(file_paths)} file(s)")
+                    return excel_src
+            except Exception as e:
+                print(f"[Reconnect] Excel failed: {e}")
+
+    return None
+
+
 def _load_mu(source: DataSource,
              model_id: str | None = None) -> ModelUnderstanding | None:
     """Load ModelUnderstanding.  Prefer *model_id*, fall back to *source_id*."""
@@ -296,7 +345,7 @@ def get_understanding():
         return jsonify({"ok": True, "data": clean})
 
 
-@app.route("/api/model/status")
+@app.route("/api/model/status", methods=["GET"])
 def model_status():
     """Check whether a confirmed understanding exists for the current source."""
     with _lock:
@@ -310,6 +359,93 @@ def model_status():
         if not data:
             return jsonify({"exists": False, "status": None})
         return jsonify({"exists": True, "status": data.get("status", "draft")})
+
+
+@app.route("/api/model/status", methods=["POST"])
+def update_model_status():
+    """User-controlled status toggle (draft ↔ confirmed)."""
+    global _scenario_agent
+    data = request.get_json() or {}
+    new_status = data.get("status", "").strip()
+    if new_status not in ("draft", "confirmed"):
+        return jsonify({"ok": False, "error": "status must be 'draft' or 'confirmed'"}), 400
+
+    with _lock:
+        # Load existing understanding
+        mu_data = None
+        if _current_model_id:
+            mu_data = _storage.load_model_understanding_by_model(_current_model_id)
+        if not mu_data and _source:
+            mu_data = _storage.load_model_understanding(_source.source_id())
+        if not mu_data:
+            return jsonify({"ok": False, "error": "No model understanding found"}), 404
+
+        meta = mu_data.get("_meta", {})
+        clean = {k: v for k, v in mu_data.items() if not k.startswith("_")}
+        clean["status"] = new_status
+
+        _storage.save_model_understanding(
+            meta.get("source_id", _source.source_id() if _source else ""),
+            clean,
+            source_type=meta.get("source_type", ""),
+            model_id=_current_model_id,
+        )
+
+        # Reinit scenario agent if confirming
+        if new_status == "confirmed" and _source:
+            mu = _load_mu(_source, model_id=_current_model_id)
+            if mu:
+                _scenario_agent = Agent(_source, mu)
+
+        return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/model/overview")
+def model_overview():
+    """Return a structured UI-friendly view of the ModelUnderstanding."""
+    with _lock:
+        data = None
+        if _current_model_id:
+            data = _storage.load_model_understanding_by_model(_current_model_id)
+        if not data and _source:
+            data = _storage.load_model_understanding(_source.source_id())
+        if not data:
+            return jsonify({"ok": True, "data": None})
+
+        clean = {k: v for k, v in data.items() if not k.startswith("_")}
+        tables = clean.get("tables", {})
+
+        # Sources with connection status
+        sources = []
+        if _current_model_id:
+            for s in _storage.get_model_sources(_current_model_id):
+                sources.append({
+                    "label": s.get("label", s.get("source_type", "")),
+                    "source_type": s.get("source_type", ""),
+                    "connected": (_source is not None and
+                                  _source.source_id() == s.get("source_id")),
+                })
+
+        overview = {
+            "model_name": clean.get("model_name", ""),
+            "description": clean.get("description", ""),
+            "status": clean.get("status", "draft"),
+            "query_language": clean.get("query_language", ""),
+            "fact_tables": [
+                {"name": n, "description": m.get("description", "")}
+                for n, m in tables.items() if m.get("role") == "fact"
+            ],
+            "dimension_tables": [
+                {"name": n, "description": m.get("description", "")}
+                for n, m in tables.items() if m.get("role") == "dimension"
+            ],
+            "relationships": clean.get("relationships", []),
+            "query_templates": list(clean.get("query_templates", {}).keys()),
+            "has_account_structure": bool(clean.get("account_structure", {}).get("groups")),
+            "filter_dimensions": list(clean.get("filter_dimensions", {}).keys()),
+            "sources": sources,
+        }
+        return jsonify({"ok": True, "data": overview})
 
 
 @app.route("/api/model/refresh", methods=["POST"])
@@ -418,9 +554,9 @@ def delete_model(model_id):
 def activate_model(model_id):
     """
     Activate a model — set it as current, load its understanding,
-    and reinitialise agents.  Does NOT reconnect the data source.
+    try to reconnect data sources, and reinitialise agents.
     """
-    global _current_model_id, _scenario_agent
+    global _current_model_id, _scenario_agent, _source, _cf_structure
     with _lock:
         model = _storage.get_model(model_id)
         if not model:
@@ -436,6 +572,23 @@ def activate_model(model_id):
             if sid:
                 _storage.link_understanding_to_model(sid, model_id)
 
+        # Try to reconnect data sources
+        reconnected = False
+        if _source is None or not _status.get("connected"):
+            try:
+                new_source = _try_reconnect_sources(model_id)
+                if new_source:
+                    _source = new_source
+                    _cf_structure = None
+                    _status.update({
+                        "connected": True,
+                        "source_type": new_source.source_type(),
+                        "message": f"Reconnected ({new_source.source_type()})",
+                    })
+                    reconnected = True
+            except Exception as e:
+                print(f"[Activate] Reconnect failed: {e}")
+
         mu = None
         if _source is not None:
             mu = _load_mu(_source, model_id=model_id)
@@ -445,6 +598,8 @@ def activate_model(model_id):
             "ok": True,
             "model": model,
             "has_understanding": mu is not None,
+            "reconnected": reconnected,
+            "connected": _status.get("connected", False),
         })
 
 
@@ -599,7 +754,6 @@ def scenario_preview():
         if not _scenario_agent.staged:
             return jsonify({"ok": False, "error": "No adjustments staged yet."})
 
-        # Get model params
         mu = _scenario_agent.mu
         rev_accs  = mu.revenue_accounts() if mu else None
         cogs_accs = mu.cogs_accounts() if mu else None
@@ -747,16 +901,21 @@ def scenario_preview():
         # Include pl_groups from model understanding for the UI
         pl_groups = None
         if mu is not None:
-            pl_groups = mu.pl_groups
+            pl_groups = sorted(mu.pl_groups) if mu.pl_groups else None
 
-        return jsonify({
-            "ok":        True,
-            "months":    months,
-            "accounts":  result_accounts,
-            "totals":    col_totals,
-            "cashflow":  cf_result,
-            "pl_groups": pl_groups,
-        })
+        try:
+            return jsonify({
+                "ok":        True,
+                "months":    months,
+                "accounts":  result_accounts,
+                "totals":    col_totals,
+                "cashflow":  cf_result,
+                "pl_groups": pl_groups,
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"ok": False, "error": f"Preview failed: {str(e)}"})
 
 
 # ── Routes: SQL Files ────────────────────────────────────────────────────────
