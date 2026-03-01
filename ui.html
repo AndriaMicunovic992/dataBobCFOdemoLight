@@ -201,9 +201,9 @@
                   box-shadow: 0 2px 8px rgba(106,187,217,0.38); }
   .h-btn.accent:hover { background: var(--accent-dk); box-shadow: 0 3px 12px rgba(106,187,217,0.48); }
   .h-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .h-btn.models-btn { background: #2563eb; border-color: transparent; color: #fff;
-                     box-shadow: 0 2px 8px rgba(37,99,235,0.38); }
-  .h-btn.models-btn:hover { background: #1d4ed8; box-shadow: 0 3px 12px rgba(37,99,235,0.48); }
+  .h-btn.models-btn { background: var(--accent); border-color: transparent; color: #fff;
+                     box-shadow: 0 2px 8px rgba(106,187,217,0.38); }
+  .h-btn.models-btn:hover { background: var(--accent-dk); box-shadow: 0 3px 12px rgba(106,187,217,0.48); }
 
 
   /* ══════════════════════════════════════
@@ -1640,6 +1640,7 @@ async function init() {
   refreshFiles();
   refreshStaged();
   refreshModelStatus();
+  switchMainTab("discovery");
 }
 
 // ── Main Tab Switching ─────────────────────────────────────────────────────────
@@ -1833,10 +1834,22 @@ async function refreshModelOverview() {
     if (r.ok && r.data) {
       renderModelOverview(r.data, container);
     } else {
-      container.innerHTML = '<div class="no-staged" style="padding:16px 0;">No model understanding available yet.</div>';
+      // Show sources section with + button even when no model data exists
+      container.innerHTML = `<div class="mo-section">
+        <div class="mo-section-hd">Sources
+          <button class="mo-edit" onclick="addModelSource()">+</button>
+        </div>
+        <div class="mo-source-item" style="color:var(--muted);font-size:10px">No sources linked</div>
+      </div>
+      <div class="no-staged" style="padding:12px 0;">Connect a data source and run discovery to build a model understanding.</div>`;
     }
   } catch(e) {
-    container.innerHTML = '<div class="no-staged" style="padding:16px 0;">Could not load model overview.</div>';
+    container.innerHTML = `<div class="mo-section">
+      <div class="mo-section-hd">Sources
+        <button class="mo-edit" onclick="addModelSource()">+</button>
+      </div>
+      <div class="mo-source-item" style="color:var(--muted);font-size:10px">No sources linked</div>
+    </div>`;
   }
 }
 
