@@ -171,6 +171,7 @@ class Agent:
         self.staged: list[dict] = []  # staged adjustment groups [{description, adjustments}]
         self.next_scenario_id  = 3    # increments with each applied scenario
         self.base_type: str | None = None  # override for value_type (set by server)
+        self.scenario_year: int | None = None  # override for default year (set by server)
 
         # Build prompt and tools dynamically from ModelUnderstanding
         self._system_prompt = PromptBuilder.build(mu)
@@ -203,7 +204,9 @@ class Agent:
 
     async def _handle_tool(self, name: str, inp: dict) -> str:
         if name == "run_query" or name == "run_dax_query":
-            year   = inp.get("year", 2026)
+            from datetime import datetime as _dt
+            default_year = self.scenario_year or _dt.now().year
+            year   = inp.get("year", default_year)
             months = inp.get("months")
 
             # Resolve value_type override from base_type setting
@@ -230,7 +233,9 @@ class Agent:
 
     async def _handle_query_customers(self, inp: dict) -> str:
         """Handle query_customers tool using ModelUnderstanding query templates."""
-        year   = inp.get("year", 2025)
+        from datetime import datetime as _dt
+        default_year = (self.scenario_year or _dt.now().year) - 1  # prior year for actuals
+        year   = inp.get("year", default_year)
         top_n  = inp.get("top_n", 10)
         search = inp.get("search_name", "").strip()
 

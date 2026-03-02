@@ -579,6 +579,7 @@ def get_cached_schema():
 # ── Routes: Scenario Base Types ──────────────────────────────────────────────
 
 _scenario_base_type: str | None = None  # auto-detect from ModelUnderstanding
+_scenario_year: int | None = None  # user-selected scenario year
 
 
 @app.route("/api/scenario/base-types")
@@ -614,6 +615,28 @@ def set_base_type():
         if _scenario_agent:
             _scenario_agent.rows = []
         return jsonify({"ok": True, "active": _scenario_base_type})
+
+
+@app.route("/api/scenario/year")
+def get_scenario_year():
+    """Return the current scenario year setting."""
+    from datetime import datetime
+    current_year = datetime.now().year
+    year = _scenario_year or current_year
+    return jsonify({"ok": True, "year": year})
+
+
+@app.route("/api/scenario/set-year", methods=["POST"])
+def set_scenario_year():
+    """Set the scenario year. Clears loaded data so next query uses the new year."""
+    global _scenario_year
+    with _lock:
+        data = request.get_json() or {}
+        _scenario_year = int(data.get("year", 0)) or None
+        # Reset rows so next query uses the new year
+        if _scenario_agent:
+            _scenario_agent.rows = []
+        return jsonify({"ok": True, "year": _scenario_year})
 
 
 # ── Routes: Model CRUD ────────────────────────────────────────────────────────
@@ -859,8 +882,9 @@ def chat():
                 _scenario_agent = Agent(_source)
 
         try:
-            # Apply base type override (actuals/budget/etc.)
+            # Apply base type and year overrides
             _scenario_agent.base_type = _scenario_base_type
+            _scenario_agent.scenario_year = _scenario_year
             reply = _run(_scenario_agent.chat(msg))
             sql_files = sorted(OUTPUT_DIR.glob("scenario_*.sql"),
                                key=lambda f: f.stat().st_mtime, reverse=True)
@@ -931,15 +955,24 @@ def scenario_preview():
         rev_accs  = mu.revenue_accounts() if mu else None
         cogs_accs = mu.cogs_accounts() if mu else None
 
+        print(f"[Preview] revenue_accounts={rev_accs}, cogs_accounts={cogs_accs}")
+
         # Flatten all staged groups into one adjustment list
         all_adjs = []
         for s in _scenario_agent.staged:
             all_adjs.extend(s["adjustments"])
 
+        print(f"[Preview] Applying {len(all_adjs)} adjustment(s) to {len(_scenario_agent.rows)} rows")
+
         orig_rows = _scenario_agent.rows
         sc_rows   = build_scenario(orig_rows, all_adjs,
                                    revenue_accs=rev_accs,
                                    cogs_accs=cogs_accs)
+
+        # Diagnostic: check if adjustments actually changed anything
+        changed_count = sum(1 for o, s in zip(orig_rows, sc_rows)
+                           if abs(o["amount"] - s["amount"]) > 0.001)
+        print(f"[Preview] Rows changed: {changed_count} / {len(orig_rows)}")
 
         # Aggregate amounts by (account, YYYY-MM)
         orig_pivot: dict[tuple, float] = {}
@@ -1076,14 +1109,25 @@ def scenario_preview():
         if mu is not None:
             pl_groups = sorted(mu.pl_groups) if mu.pl_groups else None
 
-        # Fallback: derive groups from actual account data if MU has none
-        if pl_groups is None and acc_meta:
-            all_groups = sorted({
-                meta.get("grp", "") for meta in acc_meta.values()
-                if meta.get("grp")
-            })
-            if all_groups:
-                pl_groups = all_groups
+        # Collect all actual account groups from the data
+        actual_groups = sorted({
+            meta.get("grp", "") for meta in acc_meta.values()
+            if meta.get("grp")
+        }) if acc_meta else []
+
+        # Fallback: derive pl_groups from actual account data if MU has none
+        if pl_groups is None and actual_groups:
+            pl_groups = actual_groups
+
+        # Diagnostic: check if pl_groups actually matches the data
+        if pl_groups and actual_groups:
+            matched = set(pl_groups) & set(actual_groups)
+            unmatched_pl = set(pl_groups) - set(actual_groups)
+            if not matched:
+                print(f"[Preview] WARNING: pl_groups {pl_groups} do NOT match any "
+                      f"account groups in data {actual_groups}")
+            elif unmatched_pl:
+                print(f"[Preview] Some pl_groups not in data: {unmatched_pl}")
 
         try:
             return jsonify({

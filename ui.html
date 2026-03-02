@@ -1425,9 +1425,11 @@
     <div class="zone-hd zone-bd">
       <span class="zone-title">Baseline</span>
     </div>
-    <div style="padding:4px 10px 8px">
-      <select class="base-select" id="base-type-select" onchange="setBaseType(this.value)">
+    <div style="padding:4px 10px 8px; display:flex; gap:6px; align-items:center">
+      <select class="base-select" id="base-type-select" onchange="setBaseType(this.value)" style="flex:1">
         <option value="budget">Budget</option>
+      </select>
+      <select class="base-select" id="year-select" onchange="setScenarioYear(this.value)" style="width:80px">
       </select>
     </div>
   </div>
@@ -1681,6 +1683,9 @@ function switchMainTab(tab) {
     document.getElementById("scenario-notice").style.display =
       _modelStatus === "confirmed" ? "none" : "flex";
     loadBaseTypes();
+    loadYearSelector();
+    // Refresh scenario agent with latest ModelUnderstanding
+    refreshScenarioAgent();
   }
 }
 
@@ -2521,9 +2526,9 @@ async function loadBaseTypes() {
     sel.innerHTML = '';
     for (const t of r.types) {
       const opt = document.createElement('option');
-      opt.value = t.name;
-      opt.textContent = t.name.charAt(0).toUpperCase() + t.name.slice(1) + ` (${t.value})`;
-      if (t.name === r.active) opt.selected = true;
+      opt.value = t.key;
+      opt.textContent = t.label + ` (${t.value})`;
+      if (t.key === r.active) opt.selected = true;
       sel.appendChild(opt);
     }
     zone.style.display = '';
@@ -2541,6 +2546,43 @@ async function setBaseType(type) {
     });
     toast(`Baseline: ${type}`);
   } catch(e) { /* ignore */ }
+}
+
+// ── Year Selector ────────────────────────────────────────────────
+async function loadYearSelector() {
+  try {
+    const r = await fetch('/api/scenario/year').then(r => r.json());
+    if (!r.ok) return;
+    const sel = document.getElementById('year-select');
+    const currentYear = r.year || new Date().getFullYear();
+    sel.innerHTML = '';
+    // Offer a range: current year -2 to +2
+    for (let y = currentYear - 2; y <= currentYear + 2; y++) {
+      const opt = document.createElement('option');
+      opt.value = y;
+      opt.textContent = y;
+      if (y === currentYear) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function setScenarioYear(year) {
+  try {
+    await fetch('/api/scenario/set-year', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({year: parseInt(year, 10)}),
+    });
+    toast(`Year: ${year}`);
+  } catch(e) { /* ignore */ }
+}
+
+async function refreshScenarioAgent() {
+  // Silently reload scenario agent with latest MU from discovery
+  try {
+    await fetch("/api/model/refresh", { method: "POST" });
+  } catch(e) { /* ignore — agent will use existing MU */ }
 }
 
 async function refreshModelUnderstanding() {
@@ -3046,27 +3088,19 @@ function setPreviewMode(mode, rerender = true) {
   }
 }
 
-// P&L reporting groups -- fallback constant; server may provide dynamic list
-const PL_GROUPS = new Set([
-  "Umsatz", "Warenaufwand", "Bezugskosten", "Fakturierte Nebenerlöse",
-  "Erlösminderungen", "Personalaufwand", "Raumaufwand", "Energieaufwand",
-  "Übriger Betriebsaufwand", "Marketing", "IT Aufwand",
-  "Betriebsaufwand Logistik", "Abschreibungen", "Finanzerfolg",
-  "Betriebsfremder Erfolg", "Ausserordentlicher Erfolg", "Steueraufwand",
-]);
-
 function renderPreview() {
   const { months, accounts, totals } = _previewData;
 
-  // Use dynamic pl_groups from server if available, otherwise fallback
-  const plGroupSet = _previewData.pl_groups
-    ? new Set(_previewData.pl_groups)
-    : PL_GROUPS;
-
-  // Filter to P&L accounts only for this view
-  let plAccounts = accounts.filter(a => plGroupSet.has(a.grp));
-  // Fallback: if filter yields no accounts, show all accounts
-  if (plAccounts.length === 0) {
+  // Use dynamic pl_groups from server to filter P&L accounts
+  // The server always provides pl_groups from ModelUnderstanding (or derives from data)
+  let plAccounts;
+  if (_previewData.pl_groups && _previewData.pl_groups.length > 0) {
+    const plGroupSet = new Set(_previewData.pl_groups);
+    plAccounts = accounts.filter(a => plGroupSet.has(a.grp));
+    // Fallback: if filter yields no accounts, show all accounts
+    if (plAccounts.length === 0) plAccounts = accounts;
+  } else {
+    // No pl_groups from server — show all accounts
     plAccounts = accounts;
   }
 
@@ -3084,7 +3118,7 @@ function renderPreview() {
   const sign = plGrand.delta >= 0 ? "+" : "\u2212";
   const cls  = plGrand.delta >= 0 ? "pos" : "neg";
   document.getElementById("preview-summary").innerHTML =
-    `P&L impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(plGrand.delta))}</span>` +
+    `P&L impact: <span class="iv ${cls}">${sign}${n0(Math.abs(plGrand.delta))}</span>` +
     ` &nbsp;&middot;&nbsp; ${changedAccs} of ${plAccounts.length} accounts changed` +
     ` &nbsp;&middot;&nbsp; ${changedMonths} of ${months.length} months`;
 
@@ -3316,7 +3350,7 @@ function renderWaterfall(groups) {
     // Bar
     s += `<rect x="${x}" y="${yt}" width="${bw}" height="${bh}" rx="3"
       fill="${col}" opacity="${b.type === 'anchor' ? 0.92 : 0.82}" class="wf-bar">
-      <title>${escHtml(b.label)}: CHF ${n0s(b.value)}</title></rect>`;
+      <title>${escHtml(b.label)}: ${n0s(b.value)}</title></rect>`;
 
     // Value label -- anchors show absolute, deltas show signed change
     const above  = b.type !== 'neg';
@@ -3418,9 +3452,9 @@ function renderCashflowPreview() {
   let h = `<div class="cf-wrap"><table class="cf-tbl"><thead><tr>
     <th style="width:${mode === 'compare' ? '40%' : '60%'}">Cashflow Line Item</th>`;
   if (mode === "compare") {
-    h += `<th>Original (CHF)</th><th>Scenario (CHF)</th><th>Delta (CHF)</th>`;
+    h += `<th>Original </th><th>Scenario </th><th>Delta </th>`;
   } else {
-    h += `<th>Scenario Delta (CHF)</th>`;
+    h += `<th>Scenario Delta </th>`;
   }
   h += `</tr></thead><tbody>`;
 
@@ -3430,7 +3464,7 @@ function renderCashflowPreview() {
     const sign = cfTotal.delta >= 0 ? "+" : "\u2212";
     const cls  = cfTotal.delta >= 0 ? "pos" : "neg";
     document.getElementById("preview-summary").innerHTML =
-      `Net cash impact: <span class="iv ${cls}">${sign}CHF ${n0(Math.abs(cfTotal.delta))}</span>`;
+      `Net cash impact: <span class="iv ${cls}">${sign}${n0(Math.abs(cfTotal.delta))}</span>`;
   }
 
   for (const row of cf) {
