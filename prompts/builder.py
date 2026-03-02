@@ -62,19 +62,28 @@ class PromptBuilder:
             lines.append(f"\nrun_query loads baseline data from {ft}:")
             stv = mu.scenario_type_values
             if stv:
-                budget_val = stv.get("budget", stv.get("scenario_base"))
+                # Dynamically describe available value types
+                base_key = next(
+                    (k for k in ("budget", "forecast", "scenario_base")
+                     if k in stv), next(iter(stv), None)
+                )
+                base_val = stv.get(base_key) if base_key else None
                 actuals_val = stv.get("actuals")
-                if budget_val is not None:
+                if base_val is not None:
+                    base_label = base_key.replace("_", " ").title()
                     lines.append(
-                        f"  1. Budget/plan rows ({mu.scenario_type_column}="
-                        f"{budget_val}) for the requested year"
+                        f"  1. {base_label} rows ({mu.scenario_type_column}="
+                        f"{base_val}) for the requested year"
                     )
                 if actuals_val is not None:
                     lines.append(
                         f"  2. BS/CF actuals ({mu.scenario_type_column}="
                         f"{actuals_val}) from the PRIOR year, aggregated by "
-                        f"account × month (for accounts without budget rows)"
+                        f"account × month (for accounts without baseline rows)"
                     )
+                # List all available value types so the agent knows what's possible
+                vt_desc = ", ".join(f"{k}={v}" for k, v in stv.items())
+                lines.append(f"  Available value types: {vt_desc}")
 
             amt_cols = mu.amount_columns
             if amt_cols:
@@ -104,19 +113,26 @@ class PromptBuilder:
                  "includes a full account breakdown with names and groups pulled "
                  "live from the data source."]
 
-        groups = mu.account_groups
-        if groups:
-            lines.append("\nAccount groups for adjustments:")
-            for gname, ginfo in groups.items():
-                ids = ginfo.get("account_ids", [])
-                desc = ginfo.get("description", "")
-                id_str = ",".join(str(i) for i in ids[:5])
-                if len(ids) > 5:
-                    id_str += f"... ({len(ids)} total)"
-                lines.append(
-                    f'  account_group="{gname}" → {desc} (IDs: {id_str})'
-                )
+        structures = mu.account_structures
+        for purpose, struct in structures.items():
+            label = purpose.upper()
+            table = struct.get("account_table", "")
+            if table:
+                lines.append(f"\n{label} account structure (table: {table}):")
+            groups = struct.get("groups", {})
+            if groups:
+                lines.append(f"  Account groups for {label} adjustments:")
+                for gname, ginfo in groups.items():
+                    ids = ginfo.get("account_ids", [])
+                    desc = ginfo.get("description", "")
+                    id_str = ",".join(str(i) for i in ids[:5])
+                    if len(ids) > 5:
+                        id_str += f"... ({len(ids)} total)"
+                    lines.append(
+                        f'    account_group="{gname}" → {desc} (IDs: {id_str})'
+                    )
 
+        if structures:
             lines.append('\nSpecific subset: account_group="112,114" '
                         '(comma-separated IDs).')
 
@@ -179,7 +195,7 @@ The UI automatically computes a cashflow statement impact from ALL staged adjust
             {
                 "name": "run_query",
                 "description": (
-                    f"Fetch budget/baseline data from {mu.fact_table or 'the fact table'}. "
+                    f"Fetch baseline data from {mu.fact_table or 'the fact table'}. "
                     f"Returns a summary; data stored internally."
                 ),
                 "input_schema": {

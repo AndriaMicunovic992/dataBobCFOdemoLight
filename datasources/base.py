@@ -78,6 +78,10 @@ class DataSource(ABC):
     def supports_writeback(self) -> bool:
         """Whether this source supports writing scenario data back."""
 
+    def display_name(self) -> str:
+        """Human-readable name for UI display. Default: source_id()."""
+        return self.source_id()
+
     async def get_measures(self) -> list[dict]:
         """Return DAX measures from the model. Default: empty (non-PBI sources)."""
         return []

@@ -5,9 +5,13 @@ Uses template-based queries driven by ModelUnderstanding.
 Supports both DAX (PBI) and SQL (Excel/DuckDB).
 
 The discovery agent should populate query_templates in the ModelUnderstanding
-with working 'fetch_budget' and 'fetch_account_map' templates. If templates
-are missing, fallback auto-builders construct queries from scenario_target
-and account_structure metadata.
+with working 'fetch_baseline' (or legacy 'fetch_budget') and 'fetch_account_map'
+templates. If templates are missing, fallback auto-builders construct queries
+from scenario_target and account_structure metadata.
+
+Note: The baseline query is NOT necessarily budget data — it can be actuals,
+forecasts, or any value type. The value_type_id placeholder in templates
+allows runtime switching between different value types.
 """
 
 from datasources.base import DataSource
@@ -43,19 +47,21 @@ def _parse_response_rows(resp: dict) -> list[dict]:
 # when the discovery agent didn't provide explicit query_templates.
 
 
-def _auto_build_fetch_budget(mu: ModelUnderstanding) -> str | None:
+def _auto_build_baseline_query(mu: ModelUnderstanding) -> str | None:
     """
-    Auto-build a fetch_budget query template from scenario_target metadata.
+    Auto-build a baseline data query template from scenario_target metadata.
 
-    Returns a template string with {year}, {month_filter}, {company_id}
-    placeholders, or None if required metadata is missing.
+    Returns a template string with {year}, {month_filter}, {company_id},
+    {value_type_id} placeholders, or None if required metadata is missing.
+    The value_type_id placeholder allows runtime switching between actuals,
+    budget, forecast, or any other value type.
     """
     ft = mu.fact_table
     dc = mu.date_column
     amt_cols = mu.amount_columns
 
     if not ft or not dc or not amt_cols:
-        print("[Query] Cannot auto-build fetch_budget: missing fact_table, "
+        print("[Query] Cannot auto-build baseline query: missing fact_table, "
               "date_column, or amount_columns in model understanding.")
         return None
 
@@ -81,7 +87,7 @@ def _auto_build_fetch_budget(mu: ModelUnderstanding) -> str | None:
         account_fk = mu.account_id_column
 
     if not account_fk:
-        print("[Query] Cannot auto-build fetch_budget: unable to determine "
+        print("[Query] Cannot auto-build baseline query: unable to determine "
               "account FK column in fact table.")
         return None
 
@@ -92,11 +98,11 @@ def _auto_build_fetch_budget(mu: ModelUnderstanding) -> str | None:
     cc = mu.company_column
 
     if lang == "DAX":
-        return _build_dax_fetch_budget(
+        return _build_dax_baseline_query(
             ft, dc, amt_cols, account_fk, stc, budget_val, cc, mu
         )
     elif lang == "SQL":
-        return _build_sql_fetch_budget(
+        return _build_sql_baseline_query(
             ft, dc, amt_cols, account_fk, stc, budget_val, cc, mu
         )
     else:
@@ -104,9 +110,9 @@ def _auto_build_fetch_budget(mu: ModelUnderstanding) -> str | None:
         return None
 
 
-def _build_dax_fetch_budget(ft, dc, amt_cols, account_fk,
-                             stc, budget_val, cc, mu) -> str:
-    """Build DAX EVALUATE SELECTCOLUMNS query for fetch_budget."""
+def _build_dax_baseline_query(ft, dc, amt_cols, account_fk,
+                               stc, budget_val, cc, mu) -> str:
+    """Build DAX EVALUATE SELECTCOLUMNS query for baseline data."""
     # Filter conditions
     filters = [f"YEAR('{ft}'[{dc}]) = {{year}}"]
     if cc:
@@ -148,13 +154,13 @@ def _build_dax_fetch_budget(ft, dc, amt_cols, account_fk,
         f"{select_str})"
     )
 
-    print(f"[Query] Auto-built DAX fetch_budget template from metadata")
+    print(f"[Query] Auto-built DAX baseline query template from metadata")
     return template
 
 
-def _build_sql_fetch_budget(ft, dc, amt_cols, account_fk,
-                             stc, budget_val, cc, mu) -> str:
-    """Build SQL SELECT query for fetch_budget."""
+def _build_sql_baseline_query(ft, dc, amt_cols, account_fk,
+                               stc, budget_val, cc, mu) -> str:
+    """Build SQL SELECT query for baseline data."""
     # Column aliases
     cols = [
         f"{account_fk} AS main_account_id",
@@ -191,7 +197,7 @@ def _build_sql_fetch_budget(ft, dc, amt_cols, account_fk,
 
     template = f"SELECT {col_str} FROM {ft} WHERE {where_str} {{month_filter}}"
 
-    print(f"[Query] Auto-built SQL fetch_budget template from metadata")
+    print(f"[Query] Auto-built SQL baseline query template from metadata")
     return template
 
 
@@ -313,30 +319,34 @@ def _build_sql_fetch_account_map(acct_table, id_col, name_col,
 # ── Main Query Functions ─────────────────────────────────────────────────────
 
 
-async def fetch_budget_generic(source: DataSource,
-                                mu: ModelUnderstanding,
-                                year: int,
-                                months: list[int] | None = None,
-                                value_type_override: int | None = None) -> list[dict]:
+async def fetch_baseline(source: DataSource,
+                         mu: ModelUnderstanding,
+                         year: int,
+                         months: list[int] | None = None,
+                         value_type_override: int | None = None) -> list[dict]:
     """
-    Fetch budget/baseline data using query templates from ModelUnderstanding.
+    Fetch baseline data using query templates from ModelUnderstanding.
+
+    The baseline is NOT necessarily budget data — it can be actuals, forecasts,
+    or any value type depending on the model and value_type_override.
 
     If no explicit template exists, auto-builds one from scenario_target metadata.
 
     Args:
         value_type_override: If provided, use this value_type_id instead of
-            the default budget value. Allows switching between actuals/budget/etc.
+            the default. Allows switching between actuals/budget/forecast/etc.
 
     Returns rows in the standard format:
         {account, date, amount, budget_amount, currency_id, ..., account_nr, account_name, ...}
     """
-    template = mu.get_query_template("fetch_budget")
+    # Backward compat: try "fetch_baseline" first, fall back to legacy "fetch_budget"
+    template = mu.get_query_template("fetch_baseline") or mu.get_query_template("fetch_budget")
     if not template:
-        print("[Query] No fetch_budget template — auto-building from metadata...")
-        template = _auto_build_fetch_budget(mu)
+        print("[Query] No baseline template — auto-building from metadata...")
+        template = _auto_build_baseline_query(mu)
     if not template:
         raise RuntimeError(
-            "No 'fetch_budget' query template in model understanding and "
+            "No baseline query template in model understanding and "
             "unable to auto-build from metadata. Please go to Data Understanding "
             "and re-run discovery to generate query templates."
         )
@@ -351,10 +361,14 @@ async def fetch_budget_generic(source: DataSource,
         month_list = ", ".join(str(m) for m in months)
         month_filter = f" AND EXTRACT(MONTH FROM {mu.date_column}) IN ({month_list})"
 
-    # Resolve value_type_id: override → default budget value
+    # Resolve value_type_id: override → actuals → budget → first available
     stv = mu.scenario_type_values
-    default_vt = stv.get("budget", stv.get("scenario_base", ""))
-    vt_id = value_type_override if value_type_override is not None else default_vt
+    if value_type_override is not None:
+        vt_id = value_type_override
+    elif stv:
+        vt_id = stv.get("actuals", stv.get("budget", stv.get("scenario_base", next(iter(stv.values())))))
+    else:
+        vt_id = ""
 
     # Fill template
     query = template.format(
@@ -364,9 +378,14 @@ async def fetch_budget_generic(source: DataSource,
         value_type_id=vt_id,
     )
 
-    print(f"[Query] Fetching {year} budget" +
+    # Determine which value type label to show in logs
+    _vt_label = "baseline"
+    if value_type_override is not None and stv:
+        _vt_label = next((k for k, v in stv.items() if v == value_type_override), f"type={value_type_override}")
+    print(f"[Query] Fetching {year} {_vt_label} data" +
           (f" months={months}" if months else "") + "...")
-    print(f"[Query] Template source: {'explicit' if mu.get_query_template('fetch_budget') else 'auto-built'}")
+    _has_explicit = mu.get_query_template("fetch_baseline") or mu.get_query_template("fetch_budget")
+    print(f"[Query] Template source: {'explicit' if _has_explicit else 'auto-built'}")
     print(f"[Query] SQL/DAX: {query[:200]}...")
     resp = await source.query(query)
 
@@ -467,3 +486,7 @@ async def fetch_account_map_generic(source: DataSource,
 
     print(f"[Query] Resolved {len(result)} account names")
     return result
+
+
+# Backward-compatible alias
+fetch_budget_generic = fetch_baseline

@@ -30,6 +30,7 @@ class PBIDesktopSource(DataSource):
         self._transport = None
         self._conn_str = ""
         self._db_guid = ""
+        self._display_name = ""
 
     async def connect(self, **kwargs) -> None:
         connection_string = kwargs.get("connection_string", "")
@@ -193,6 +194,9 @@ class PBIDesktopSource(DataSource):
 
     def source_id(self) -> str:
         return f"pbi:{self._db_guid}" if self._db_guid else "pbi:not_connected"
+
+    def display_name(self) -> str:
+        return self._display_name or self._conn_str or self.source_id()
 
     def query_language(self) -> str:
         return "DAX"

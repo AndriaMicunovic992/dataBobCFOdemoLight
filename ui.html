@@ -1955,17 +1955,25 @@ function renderModelOverview(d, container) {
   }
   html += `</div>`;
 
-  // Account Structure
+  // Account Structures
   html += `<div class="mo-section">
-    <div class="mo-section-hd">Account Structure
+    <div class="mo-section-hd">Account Structures
       <button class="mo-edit" onclick="editModelSection('accounts')">Edit</button>
-    </div>
-    <div class="mo-item">
-      <span class="mo-badge ${d.has_account_structure ? 'ok' : 'missing'}">
-        ${d.has_account_structure ? 'Configured' : 'Not set'}
-      </span>
-    </div>
-  </div>`;
+    </div>`;
+  const acctStructures = d.account_structures || (d.account_structure ? {pl: d.account_structure} : null);
+  if (acctStructures && Object.keys(acctStructures).length > 0) {
+    for (const [purpose, struct] of Object.entries(acctStructures)) {
+      const tbl = struct.account_table || '?';
+      const gCount = Object.keys(struct.groups || {}).length;
+      html += `<div class="mo-item">
+        <div class="mo-item-name">${escHtml(purpose.toUpperCase())}</div>
+        <div class="mo-item-desc">${escHtml(tbl)} &middot; ${gCount} group${gCount !== 1 ? 's' : ''}</div>
+      </div>`;
+    }
+  } else {
+    html += `<div class="mo-item"><span class="mo-badge missing">Not set</span></div>`;
+  }
+  html += `</div>`;
 
   // Filters
   if (d.filter_dimensions && d.filter_dimensions.length) {
@@ -1991,6 +1999,8 @@ function editModelSection(section) {
   openSectionEditorModal(section);
 }
 
+let _sectionEditorSchema = null;  // cached schema for pickers
+
 async function openSectionEditorModal(section) {
   const titleEl = document.getElementById('section-editor-title');
   const bodyEl  = document.getElementById('section-editor-body');
@@ -2005,9 +2015,15 @@ async function openSectionEditorModal(section) {
   document.getElementById('section-editor-modal').classList.add('open');
 
   try {
-    const r = await fetch('/api/model/understanding').then(r => r.json());
-    if (!r.ok) { bodyEl.innerHTML = '<div style="color:var(--red)">Failed to load</div>'; return; }
-    _sectionEditorData = r.data || {};
+    // Fetch MU and schema in parallel for sections that need pickers
+    const needsSchema = ['fact_tables', 'dimensions', 'relationships', 'measures', 'accounts'].includes(section);
+    const [muRes, schemaRes] = await Promise.all([
+      fetch('/api/model/understanding').then(r => r.json()),
+      needsSchema ? fetch('/api/schema/cached').then(r => r.json()).catch(() => null) : null,
+    ]);
+    if (!muRes.ok) { bodyEl.innerHTML = '<div style="color:var(--red)">Failed to load</div>'; return; }
+    _sectionEditorData = muRes.data || {};
+    _sectionEditorSchema = schemaRes;
     renderSectionEditorBody(section, bodyEl);
   } catch(e) {
     bodyEl.innerHTML = `<div style="color:var(--red)">${escHtml(e.message)}</div>`;
@@ -2016,37 +2032,89 @@ async function openSectionEditorModal(section) {
 
 function renderSectionEditorBody(section, el) {
   const d = _sectionEditorData;
+  const schema = _sectionEditorSchema;
   let html = '';
 
   if (section === 'fact_tables' || section === 'dimensions') {
     const role = section === 'fact_tables' ? 'fact' : 'dimension';
-    const tables = Object.entries(d.tables || {}).filter(([,v]) => v.role === role);
-    html += `<div id="se-items">`;
-    for (const [name, info] of tables) {
-      html += `<div class="se-row" data-name="${escHtml(name)}">
-        <label>Name</label><input type="text" class="se-name" value="${escHtml(name)}" readonly style="background:var(--bg)">
-        <label>Desc</label><input type="text" class="se-desc" value="${escHtml(info.description || '')}">
-        <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
-      </div>`;
+    const existingTables = d.tables || {};
+    const roleEntries = Object.entries(existingTables).filter(([,v]) => v.role === role);
+    const selectedNames = new Set(roleEntries.map(([n]) => n));
+
+    // If we have schema, show checkboxes for available tables
+    const schemaTables = schema?.tables || [];
+    if (schemaTables.length > 0) {
+      html += `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">Select from discovered tables:</div>`;
+      html += `<div id="se-items" style="max-height:400px;overflow-y:auto">`;
+      for (const st of schemaTables) {
+        if (st.is_hidden) continue;
+        const checked = selectedNames.has(st.name) ? 'checked' : '';
+        const desc = existingTables[st.name]?.description || '';
+        const cols = st.columns?.slice(0, 8).join(', ') || '';
+        const colMore = (st.columns?.length || 0) > 8 ? ` ... +${st.columns.length - 8}` : '';
+        html += `<div class="se-row" style="align-items:flex-start;gap:8px">
+          <input type="checkbox" class="se-check" data-table="${escHtml(st.name)}" ${checked} style="margin-top:3px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600">${escHtml(st.name)}</div>
+            <div style="font-size:10px;color:var(--muted);word-break:break-all">${escHtml(cols)}${escHtml(colMore)}</div>
+            <input type="text" class="se-desc" value="${escHtml(desc)}" placeholder="Description (optional)" style="width:100%;margin-top:2px">
+          </div>
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      // Fallback: manual entry (no schema available)
+      html += `<div id="se-items">`;
+      for (const [name, info] of roleEntries) {
+        html += `<div class="se-row" data-name="${escHtml(name)}">
+          <label>Name</label><input type="text" class="se-name" value="${escHtml(name)}" style="flex:1">
+          <label>Desc</label><input type="text" class="se-desc" value="${escHtml(info.description || '')}">
+          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+        </div>`;
+      }
+      html += `</div>`;
+      html += `<button class="se-add" onclick="addSectionRow_table('${role}')">+ Add Table</button>`;
     }
-    html += `</div>`;
-    html += `<button class="se-add" onclick="addSectionRow_table('${role}')">+ Add Table</button>`;
   }
   else if (section === 'relationships') {
     const rels = d.relationships || [];
-    html += `<div id="se-items">`;
-    for (const r of rels) {
-      html += `<div class="se-row">
-        <input type="text" class="se-ft" value="${escHtml(r.from_table || '')}" placeholder="From table" style="flex:1">
-        <input type="text" class="se-fc" value="${escHtml(r.from_column || '')}" placeholder="From col" style="flex:1">
-        <span style="color:var(--muted)">&rarr;</span>
-        <input type="text" class="se-tt" value="${escHtml(r.to_table || '')}" placeholder="To table" style="flex:1">
-        <input type="text" class="se-tc" value="${escHtml(r.to_column || '')}" placeholder="To col" style="flex:1">
-        <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
-      </div>`;
+    const schemaRels = schema?.relationships || [];
+
+    if (schemaRels.length > 0) {
+      // Build a set of existing relationships for comparison
+      const existingSet = new Set(rels.map(r => `${r.from_table}|${r.from_column}|${r.to_table}|${r.to_column}`));
+      html += `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">Select from discovered relationships:</div>`;
+      html += `<div id="se-items" style="max-height:400px;overflow-y:auto">`;
+      for (const sr of schemaRels) {
+        const key = `${sr.from_table || ''}|${sr.from_column || ''}|${sr.to_table || ''}|${sr.to_column || ''}`;
+        const checked = existingSet.has(key) ? 'checked' : '';
+        html += `<div class="se-row" style="align-items:center;gap:6px">
+          <input type="checkbox" class="se-check"
+            data-ft="${escHtml(sr.from_table || '')}" data-fc="${escHtml(sr.from_column || '')}"
+            data-tt="${escHtml(sr.to_table || '')}" data-tc="${escHtml(sr.to_column || '')}"
+            ${checked}>
+          <span style="flex:1;font-size:11px">${escHtml(sr.from_table || '')}.<b>${escHtml(sr.from_column || '')}</b>
+            <span style="color:var(--muted)">&rarr;</span>
+            ${escHtml(sr.to_table || '')}.<b>${escHtml(sr.to_column || '')}</b></span>
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      // Fallback: manual entry
+      html += `<div id="se-items">`;
+      for (const r of rels) {
+        html += `<div class="se-row">
+          <input type="text" class="se-ft" value="${escHtml(r.from_table || '')}" placeholder="From table" style="flex:1">
+          <input type="text" class="se-fc" value="${escHtml(r.from_column || '')}" placeholder="From col" style="flex:1">
+          <span style="color:var(--muted)">&rarr;</span>
+          <input type="text" class="se-tt" value="${escHtml(r.to_table || '')}" placeholder="To table" style="flex:1">
+          <input type="text" class="se-tc" value="${escHtml(r.to_column || '')}" placeholder="To col" style="flex:1">
+          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+        </div>`;
+      }
+      html += `</div>`;
+      html += `<button class="se-add" onclick="addSectionRow_rel()">+ Add Relationship</button>`;
     }
-    html += `</div>`;
-    html += `<button class="se-add" onclick="addSectionRow_rel()">+ Add Relationship</button>`;
   }
   else if (section === 'queries') {
     const qt = d.query_templates || {};
@@ -2064,29 +2132,19 @@ function renderSectionEditorBody(section, el) {
     html += `<button class="se-add" onclick="addSectionRow_query()">+ Add Template</button>`;
   }
   else if (section === 'accounts') {
-    const as = d.account_structure || {};
-    html += `<div style="margin-bottom:8px">`;
-    html += `<div class="se-row"><label>Account Table</label><input type="text" id="se-acct-table" value="${escHtml(as.account_table || '')}"></div>`;
-    html += `<div class="se-row"><label>ID Column</label><input type="text" id="se-acct-id" value="${escHtml(as.account_id_column || '')}"></div>`;
-    html += `<div class="se-row"><label>Name Column</label><input type="text" id="se-acct-name" value="${escHtml(as.account_name_column || '')}"></div>`;
-    html += `</div>`;
-    html += `<div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;margin:8px 0 4px">Groups</div>`;
-    html += `<div id="se-items">`;
-    for (const [gname, ginfo] of Object.entries(as.groups || {})) {
-      const ids = (ginfo.account_ids || []).join(', ');
-      html += `<div class="se-row" style="flex-direction:column;align-items:stretch">
-        <div style="display:flex;gap:6px;align-items:center">
-          <label>Group</label><input type="text" class="se-gname" value="${escHtml(gname)}" style="flex:1">
-          <label>Desc</label><input type="text" class="se-gdesc" value="${escHtml(ginfo.description || '')}" style="flex:1">
-          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
-        </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <label>IDs</label><input type="text" class="se-gids" value="${escHtml(ids)}" placeholder="Comma-separated account IDs" style="flex:1">
-        </div>
-      </div>`;
+    // Support multiple account structures keyed by purpose
+    const structures = d.account_structures || (d.account_structure ? {pl: d.account_structure} : {});
+    const schemaTables = schema?.tables || [];
+    const tableOptions = schemaTables.length > 0
+      ? schemaTables.filter(t => !t.is_hidden).map(t => `<option value="${escHtml(t.name)}">${escHtml(t.name)}</option>`).join('')
+      : '';
+
+    html += `<div id="se-acct-structures">`;
+    for (const [purpose, struct] of Object.entries(structures)) {
+      html += _renderAccountStructure(purpose, struct, tableOptions);
     }
     html += `</div>`;
-    html += `<button class="se-add" onclick="addSectionRow_group()">+ Add Group</button>`;
+    html += `<button class="se-add" onclick="addAccountStructure()">+ Add Structure</button>`;
   }
   else if (section === 'filters') {
     const fd = d.filter_dimensions || {};
@@ -2104,19 +2162,35 @@ function renderSectionEditorBody(section, el) {
   }
   else if (section === 'measures') {
     const measures = d.measures || {};
-    html += `<div id="se-items">`;
-    for (const [mname, minfo] of Object.entries(measures)) {
-      html += `<div class="se-row" style="flex-direction:column;align-items:stretch">
-        <div style="display:flex;gap:6px;align-items:center">
-          <label>Name</label><input type="text" class="se-mname" value="${escHtml(mname)}" style="flex:1">
-          <label>Table</label><input type="text" class="se-mtable" value="${escHtml(minfo.table || '')}" style="flex:0.7">
-          <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
-        </div>
-        <textarea class="se-mexpr" style="font-family:monospace;font-size:11px" placeholder="DAX expression">${escHtml(minfo.expression || '')}</textarea>
-      </div>`;
+    const schemaMeasures = schema?.measures || [];
+    const selectedNames = new Set(Object.keys(measures));
+
+    if (schemaMeasures.length > 0) {
+      html += `<div style="font-size:10px;color:var(--muted);margin-bottom:6px">Select from discovered measures:</div>`;
+      html += `<div id="se-items" style="max-height:400px;overflow-y:auto">`;
+      for (const sm of schemaMeasures) {
+        if (sm.is_hidden) continue;
+        const checked = selectedNames.has(sm.name) ? 'checked' : '';
+        const table = sm.table || '';
+        html += `<div class="se-row" style="align-items:center;gap:6px">
+          <input type="checkbox" class="se-check" data-mname="${escHtml(sm.name)}" data-mtable="${escHtml(table)}" ${checked}>
+          <span style="flex:1"><b>${escHtml(sm.name)}</b> <span style="color:var(--muted);font-size:10px">[${escHtml(table)}]</span></span>
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      // Fallback: manual entry
+      html += `<div id="se-items">`;
+      for (const [mname, minfo] of Object.entries(measures)) {
+        html += `<div class="se-row">
+            <label>Name</label><input type="text" class="se-mname" value="${escHtml(mname)}" style="flex:1">
+            <label>Table</label><input type="text" class="se-mtable" value="${escHtml(minfo.table || '')}" style="flex:0.7">
+            <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+        </div>`;
+      }
+      html += `</div>`;
+      html += `<button class="se-add" onclick="addSectionRow_measure()">+ Add Measure</button>`;
     }
-    html += `</div>`;
-    html += `<button class="se-add" onclick="addSectionRow_measure()">+ Add Measure</button>`;
   }
 
   el.innerHTML = html;
@@ -2156,8 +2230,8 @@ function addSectionRow_query() {
     <textarea class="se-qval" style="font-family:monospace;font-size:11px" placeholder="Query template..."></textarea>`;
   c.appendChild(div);
 }
-function addSectionRow_group() {
-  const c = document.getElementById('se-items');
+function addSectionRow_group(containerId) {
+  const c = document.getElementById(containerId || 'se-items');
   const div = document.createElement('div');
   div.className = 'se-row';
   div.setAttribute('style', 'flex-direction:column;align-items:stretch');
@@ -2170,6 +2244,70 @@ function addSectionRow_group() {
       <label>IDs</label><input type="text" class="se-gids" placeholder="Comma-separated account IDs" style="flex:1">
     </div>`;
   c.appendChild(div);
+}
+
+function _renderAccountStructure(purpose, struct, tableOptions) {
+  const acctTable = struct.account_table || '';
+  const tableSelector = tableOptions
+    ? `<select class="se-acct-table" style="flex:1">${'<option value="">-- select --</option>' + tableOptions}</select>`
+    : `<input type="text" class="se-acct-table" value="${escHtml(acctTable)}" placeholder="Table name" style="flex:1">`;
+  const gid = `se-groups-${purpose}`;
+  let h = `<div class="se-acct-block" data-purpose="${escHtml(purpose)}" style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px">
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <label style="font-weight:700;text-transform:uppercase;font-size:10px;color:var(--muted)">Purpose</label>
+      <select class="se-acct-purpose" style="flex:0.5">
+        <option value="pl" ${purpose === 'pl' ? 'selected' : ''}>P&L</option>
+        <option value="cf" ${purpose === 'cf' ? 'selected' : ''}>Cashflow</option>
+        <option value="bs" ${purpose === 'bs' ? 'selected' : ''}>Balance Sheet</option>
+      </select>
+      <label>Table</label>${tableSelector}
+      <button class="se-remove" onclick="this.closest('.se-acct-block').remove()" style="color:var(--red)">&times;</button>
+    </div>
+    <div class="se-row"><label>ID Column</label><input type="text" class="se-acct-id" value="${escHtml(struct.account_id_column || '')}"></div>
+    <div class="se-row"><label>Name Column</label><input type="text" class="se-acct-name" value="${escHtml(struct.account_name_column || '')}"></div>
+    <div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;margin:6px 0 4px">Groups</div>
+    <div id="${gid}">`;
+  for (const [gname, ginfo] of Object.entries(struct.groups || {})) {
+    const ids = (ginfo.account_ids || []).join(', ');
+    h += `<div class="se-row" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;gap:6px;align-items:center">
+        <label>Group</label><input type="text" class="se-gname" value="${escHtml(gname)}" style="flex:1">
+        <label>Desc</label><input type="text" class="se-gdesc" value="${escHtml(ginfo.description || '')}" style="flex:1">
+        <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <label>IDs</label><input type="text" class="se-gids" value="${escHtml(ids)}" placeholder="Comma-separated account IDs" style="flex:1">
+      </div>
+    </div>`;
+  }
+  h += `</div>
+    <button class="se-add" onclick="addSectionRow_group('${gid}')">+ Add Group</button>
+  </div>`;
+
+  // Set the select value after rendering (for dynamically created selects)
+  setTimeout(() => {
+    const block = document.querySelector(`.se-acct-block[data-purpose="${purpose}"]`);
+    if (block) {
+      const sel = block.querySelector('.se-acct-table');
+      if (sel && sel.tagName === 'SELECT') sel.value = acctTable;
+    }
+  }, 0);
+
+  return h;
+}
+
+function addAccountStructure() {
+  const container = document.getElementById('se-acct-structures');
+  const existing = container.querySelectorAll('.se-acct-block');
+  const usedPurposes = new Set();
+  existing.forEach(b => usedPurposes.add(b.querySelector('.se-acct-purpose')?.value));
+  // Pick next unused purpose
+  const purpose = ['pl', 'cf', 'bs'].find(p => !usedPurposes.has(p)) || `custom_${existing.length}`;
+  const schemaTables = _sectionEditorSchema?.tables || [];
+  const tableOptions = schemaTables.length > 0
+    ? schemaTables.filter(t => !t.is_hidden).map(t => `<option value="${escHtml(t.name)}">${escHtml(t.name)}</option>`).join('')
+    : '';
+  container.insertAdjacentHTML('beforeend', _renderAccountStructure(purpose, {}, tableOptions));
 }
 function addSectionRow_filter() {
   const c = document.getElementById('se-items');
@@ -2185,13 +2323,9 @@ function addSectionRow_measure() {
   const c = document.getElementById('se-items');
   const div = document.createElement('div');
   div.className = 'se-row';
-  div.setAttribute('style', 'flex-direction:column;align-items:stretch');
-  div.innerHTML = `<div style="display:flex;gap:6px;align-items:center">
-      <label>Name</label><input type="text" class="se-mname" placeholder="Measure name" style="flex:1">
+  div.innerHTML = `<label>Name</label><input type="text" class="se-mname" placeholder="Measure name" style="flex:1">
       <label>Table</label><input type="text" class="se-mtable" placeholder="Table" style="flex:0.7">
-      <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>
-    </div>
-    <textarea class="se-mexpr" style="font-family:monospace;font-size:11px" placeholder="DAX expression"></textarea>`;
+      <button class="se-remove" onclick="this.closest('.se-row').remove()">&times;</button>`;
   c.appendChild(div);
 }
 
@@ -2199,6 +2333,7 @@ function closeSectionEditor() {
   document.getElementById('section-editor-modal').classList.remove('open');
   _sectionEditorData = null;
   _sectionEditorType = null;
+  _sectionEditorSchema = null;
 }
 
 async function saveSectionEditor() {
@@ -2213,26 +2348,53 @@ async function saveSectionEditor() {
     for (const [k, v] of Object.entries(tables)) {
       if (v.role === role) delete tables[k];
     }
-    // Add current rows
-    for (const row of document.querySelectorAll('#se-items .se-row')) {
-      const name = row.querySelector('.se-name')?.value.trim();
-      const desc = row.querySelector('.se-desc')?.value.trim();
-      if (name) {
-        tables[name] = {...(d.tables?.[name] || {}), role, description: desc};
+    // Check if we used checkbox mode (schema picker) or manual entry
+    const checkboxes = document.querySelectorAll('#se-items .se-check');
+    if (checkboxes.length > 0) {
+      // Schema picker mode: add checked tables
+      for (const row of document.querySelectorAll('#se-items .se-row')) {
+        const cb = row.querySelector('.se-check');
+        if (cb && cb.checked) {
+          const name = cb.dataset.table;
+          const desc = row.querySelector('.se-desc')?.value.trim() || '';
+          tables[name] = {...(d.tables?.[name] || {}), role, description: desc};
+        }
+      }
+    } else {
+      // Manual entry mode
+      for (const row of document.querySelectorAll('#se-items .se-row')) {
+        const name = row.querySelector('.se-name')?.value.trim();
+        const desc = row.querySelector('.se-desc')?.value.trim();
+        if (name) {
+          tables[name] = {...(d.tables?.[name] || {}), role, description: desc};
+        }
       }
     }
     patch.tables = tables;
   }
   else if (section === 'relationships') {
-    const rels = [];
-    for (const row of document.querySelectorAll('#se-items .se-row')) {
-      const ft = row.querySelector('.se-ft')?.value.trim();
-      const fc = row.querySelector('.se-fc')?.value.trim();
-      const tt = row.querySelector('.se-tt')?.value.trim();
-      const tc = row.querySelector('.se-tc')?.value.trim();
-      if (ft && fc && tt && tc) rels.push({from_table: ft, from_column: fc, to_table: tt, to_column: tc});
+    const checkboxes = document.querySelectorAll('#se-items .se-check');
+    if (checkboxes.length > 0) {
+      // Schema picker mode
+      const rels = [];
+      for (const cb of checkboxes) {
+        if (cb.checked) {
+          rels.push({from_table: cb.dataset.ft, from_column: cb.dataset.fc, to_table: cb.dataset.tt, to_column: cb.dataset.tc});
+        }
+      }
+      patch.relationships = rels;
+    } else {
+      // Manual entry mode
+      const rels = [];
+      for (const row of document.querySelectorAll('#se-items .se-row')) {
+        const ft = row.querySelector('.se-ft')?.value.trim();
+        const fc = row.querySelector('.se-fc')?.value.trim();
+        const tt = row.querySelector('.se-tt')?.value.trim();
+        const tc = row.querySelector('.se-tc')?.value.trim();
+        if (ft && fc && tt && tc) rels.push({from_table: ft, from_column: fc, to_table: tt, to_column: tc});
+      }
+      patch.relationships = rels;
     }
-    patch.relationships = rels;
   }
   else if (section === 'queries') {
     const qt = {};
@@ -2244,24 +2406,36 @@ async function saveSectionEditor() {
     patch.query_templates = qt;
   }
   else if (section === 'accounts') {
-    const as = {...(d.account_structure || {})};
-    as.account_table = document.getElementById('se-acct-table')?.value.trim() || '';
-    as.account_id_column = document.getElementById('se-acct-id')?.value.trim() || '';
-    as.account_name_column = document.getElementById('se-acct-name')?.value.trim() || '';
-    const groups = {};
-    for (const row of document.querySelectorAll('#se-items .se-row')) {
-      const gname = row.querySelector('.se-gname')?.value.trim();
-      const gdesc = row.querySelector('.se-gdesc')?.value.trim();
-      const gids = row.querySelector('.se-gids')?.value.trim();
-      if (gname) {
-        groups[gname] = {
-          description: gdesc,
-          account_ids: gids ? gids.split(',').map(s => {const n = parseInt(s.trim()); return isNaN(n) ? s.trim() : n;}) : [],
-        };
+    const structures = {};
+    for (const block of document.querySelectorAll('.se-acct-block')) {
+      const purpose = block.querySelector('.se-acct-purpose')?.value || 'pl';
+      const struct = {};
+      struct.account_table = block.querySelector('.se-acct-table')?.value.trim() || '';
+      struct.account_id_column = block.querySelector('.se-acct-id')?.value.trim() || '';
+      struct.account_name_column = block.querySelector('.se-acct-name')?.value.trim() || '';
+      const groups = {};
+      for (const row of block.querySelectorAll('.se-row')) {
+        const gname = row.querySelector('.se-gname')?.value?.trim();
+        const gdesc = row.querySelector('.se-gdesc')?.value?.trim();
+        const gids = row.querySelector('.se-gids')?.value?.trim();
+        if (gname) {
+          groups[gname] = {
+            description: gdesc || '',
+            account_ids: gids ? gids.split(',').map(s => {const n = parseInt(s.trim()); return isNaN(n) ? s.trim() : n;}) : [],
+          };
+        }
       }
+      struct.groups = groups;
+      structures[purpose] = struct;
     }
-    as.groups = groups;
-    patch.account_structure = as;
+    patch.account_structures = structures;
+    // Also set legacy account_structure to primary (pl) for backward compat
+    if (structures.pl) {
+      patch.account_structure = structures.pl;
+    } else {
+      const first = Object.values(structures)[0];
+      if (first) patch.account_structure = first;
+    }
   }
   else if (section === 'filters') {
     const fd = {};
@@ -2277,14 +2451,26 @@ async function saveSectionEditor() {
     patch.filter_dimensions = fd;
   }
   else if (section === 'measures') {
-    const measures = {};
-    for (const row of document.querySelectorAll('#se-items .se-row')) {
-      const mname = row.querySelector('.se-mname')?.value.trim();
-      const mtable = row.querySelector('.se-mtable')?.value.trim();
-      const mexpr = row.querySelector('.se-mexpr')?.value.trim();
-      if (mname) measures[mname] = {table: mtable, expression: mexpr, description: ''};
+    const checkboxes = document.querySelectorAll('#se-items .se-check');
+    if (checkboxes.length > 0) {
+      // Schema picker mode
+      const measures = {};
+      for (const cb of checkboxes) {
+        if (cb.checked) {
+          measures[cb.dataset.mname] = {table: cb.dataset.mtable || '', description: ''};
+        }
+      }
+      patch.measures = measures;
+    } else {
+      // Manual entry mode
+      const measures = {};
+      for (const row of document.querySelectorAll('#se-items .se-row')) {
+        const mname = row.querySelector('.se-mname')?.value.trim();
+        const mtable = row.querySelector('.se-mtable')?.value.trim();
+        if (mname) measures[mname] = {table: mtable, description: ''};
+      }
+      patch.measures = measures;
     }
-    patch.measures = measures;
   }
 
   try {
@@ -2453,6 +2639,7 @@ async function connectSelected() {
     body:    JSON.stringify({
       connection_string: selectedInstance.connection_string,
       database:          selectedInstance.database,
+      display_name:      selectedInstance.display_name,
     })
   }).then(r => r.json()).catch(e => ({ok: false, message: String(e)}));
 
