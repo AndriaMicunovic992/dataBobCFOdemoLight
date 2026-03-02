@@ -21,7 +21,7 @@ from datasources.base import DataSource
 from discovery.model_understanding import ModelUnderstanding
 from prompts.builder import PromptBuilder
 from cache import cache_save, cache_load
-from queries import fetch_budget_generic
+from queries import fetch_baseline
 from scenario import build_scenario, make_sql, save_sql
 
 
@@ -33,7 +33,7 @@ def data_summary(rows: list[dict],
     Return a rich text summary of loaded budget rows.
 
     Account names, GL numbers, and reporting groups come from the enriched row
-    fields added by fetch_budget (live from the data source) — no static map
+    fields added by fetch_baseline (live from the data source) — no static map
     needed here. Uses ModelUnderstanding's pl_groups to classify P&L vs BS accounts.
     """
     months:      set[str]         = set()
@@ -71,15 +71,15 @@ def data_summary(rows: list[dict],
     lines = [
         f"Data loaded: {len(rows)} rows | {len(acct_totals)} accounts "
         f"| {ms[0]} to {ms[-1]}",
-        f"  P&L accounts : {len(pl_accts):>4}   (budget {ms[0][:4]})",
-        f"    Revenue    : CHF {rev:>15,.0f}",
-        f"    COGS       : CHF {cogs:>15,.0f}",
-        f"    P&L total  : CHF {pl_total:>15,.0f}",
+        f"  P&L accounts : {len(pl_accts):>4}   (baseline {ms[0][:4]})",
+        f"    Revenue    : {rev:>15,.0f}",
+        f"    COGS       : {cogs:>15,.0f}",
+        f"    P&L total  : {pl_total:>15,.0f}",
         f"  BS/CF accounts: {len(bs_accts):>4}   (prior-year actuals as baseline)",
-        f"    BS total   : CHF {bs_total:>15,.0f}",
+        f"    BS total   : {bs_total:>15,.0f}",
         "",
         "Account breakdown:",
-        f"  {'ID':>4}  {'GL-Nr.':>8}  {'Group':<26}  {'Name':<36}  {'Amount CHF':>14}",
+        f"  {'ID':>4}  {'GL-Nr.':>8}  {'Group':<26}  {'Name':<36}  {'Amount':>14}",
         "  " + "─" * 96,
     ]
 
@@ -212,7 +212,7 @@ class Agent:
                 stv = self.mu.scenario_type_values
                 vt_override = stv.get(self.base_type)
 
-            rows = await fetch_budget_generic(
+            rows = await fetch_baseline(
                 self.source, self.mu, year, months,
                 value_type_override=vt_override,
             )
@@ -267,8 +267,8 @@ class Agent:
                 total_rev = sum(float(r.get("revenue", 0)) for r in top_rows) or 1
 
             lines = [f"Top {top_n} customers by actual revenue {year} "
-                     f"(total company: CHF {total_rev:,.0f}):", ""]
-            lines.append(f"  {'Rank':<5} {'ID':<13} {'Revenue CHF':>14} {'Share':>7}  Name")
+                     f"(total company: {total_rev:,.0f}):", ""]
+            lines.append(f"  {'Rank':<5} {'ID':<13} {'Revenue':>14} {'Share':>7}  Name")
             lines.append("  " + "─" * 70)
             for rank, r in enumerate(top_rows, 1):
                 cid   = int(r.get("customer_id", r.get("id", 0)))
@@ -343,7 +343,7 @@ class Agent:
                             "\n\n⚠️  Nothing staged yet — describe your adjustments first.")
                 if not self.rows:
                     return (re.sub(r"```apply[\s\S]*?```", "", text).strip() +
-                            "\n\n⚠️  No budget data loaded — please fetch the budget first.")
+                            "\n\n⚠️  No baseline data loaded — please fetch data first.")
 
                 # Flatten all staged adjustment groups
                 all_adjs = []
@@ -357,8 +357,8 @@ class Agent:
                 # Get model-specific params from ModelUnderstanding
                 rev_accs = self.mu.revenue_accounts()
                 cogs_accs = self.mu.cogs_accounts()
-                st = self.mu.sql_target
-                target_table = st.get("table_name") if st else None
+                target_table = self.mu.sql_target_table
+                sql_columns = self.mu.sql_columns or None
                 company_id = self.mu.company_id
                 from config import OUTPUT_DIR
                 output_dir = OUTPUT_DIR
@@ -370,7 +370,8 @@ class Agent:
                                 apply_spec.get("description", ""),
                                 scenario_id=scenario_id,
                                 target_table=target_table,
-                                company_id=company_id)
+                                company_id=company_id,
+                                columns=sql_columns)
                 path = save_sql(sql, apply_spec["label"],
                                 scenario_id=scenario_id,
                                 output_dir=output_dir)

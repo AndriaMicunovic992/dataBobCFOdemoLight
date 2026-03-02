@@ -2,12 +2,14 @@
 scenario.py — Scenario calculation and SQL generation.
 
 Provides:
-  build_scenario()  — apply % adjustments to budget rows
+  build_scenario()  — apply % adjustments to baseline rows
   make_sql()        — render rows as a SQL INSERT script
   save_sql()        — write the SQL script to the output folder
 
-All model-specific values (company ID, account sets, table names) are passed
-as parameters from the ModelUnderstanding document.
+All model-specific values (company ID, account sets, table names, columns) are
+passed as parameters from the ModelUnderstanding document. No hardcoded model-
+specific constants — column lists are derived dynamically from data rows and/or
+the sql_target.columns in ModelUnderstanding.
 """
 
 import re
@@ -90,6 +92,33 @@ def _sql_val(v) -> str:
     return str(v)
 
 
+def _derive_sql_columns(scenario: list[dict], company_id, scenario_id) -> list[str]:
+    """
+    Derive the INSERT column list dynamically from the actual row keys.
+
+    Always includes the core columns (account, company, date, value_type,
+    amount, budget_amount) in a stable order, then appends any additional
+    FK columns found in the data rows (currency_id, cost_center_id, etc.).
+    """
+    # Core columns in fixed order — these are always present
+    core = ["main_account_id", "company_id", "accounting_date", "value_type_id",
+            "amount", "budget_amount"]
+
+    # Collect all additional FK-like columns present across rows
+    # Skip internal/display-only fields that aren't real DB columns
+    skip = {"account", "date", "account_nr", "account_name", "account_grp",
+            "cf_position", "cost_object_name", "main_account_id",
+            "accounting_date", "budget_amount"}
+    extra = set()
+    for r in scenario:
+        for k in r:
+            if k not in skip and k not in ("amount",):
+                extra.add(k)
+
+    # Sort extras for deterministic output
+    return core + sorted(extra)
+
+
 def make_sql(scenario: list[dict], label: str, description: str = "",
              scenario_id: int = 3,
              target_table: str | None = None,
@@ -100,18 +129,32 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
 
     Args:
         scenario_id: The value_type_id written into every row.
-        target_table: SQL table name (default: "[Fakten Hauptbuch]").
+        target_table: SQL table name. Required — no hardcoded default.
         company_id:   Company ID for the INSERT from ModelUnderstanding.
-        columns:      List of columns to include. If None, uses the default set.
+        columns:      Explicit list of SQL columns to include. If None, columns
+                      are derived dynamically from the data row keys.
 
     Includes a header comment, a commented-out DELETE statement for safe
     re-loading, the INSERT VALUES block, and a verification SELECT.
     """
-    _table = target_table or "[Fakten Hauptbuch]"
+    if not target_table:
+        raise ValueError(
+            "target_table is required for SQL generation. "
+            "Ensure sql_target.table_name is set in ModelUnderstanding."
+        )
+    _table = target_table
     _company = company_id if company_id is not None else 0
+
+    # Determine column list: explicit > derived from rows
+    if columns:
+        sql_cols = list(columns)
+    else:
+        sql_cols = _derive_sql_columns(scenario, _company, scenario_id)
 
     dates       = sorted({r["date"] for r in scenario})
     sorted_rows = sorted(scenario, key=lambda r: (r["date"], r["account"]))
+
+    col_str = ", ".join(sql_cols)
 
     lines = [
         "-- ================================================================",
@@ -132,29 +175,35 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
         "--   AND accounting_date IN ({});".format(", ".join(f"'{d}'" for d in dates)),
         "",
         f"INSERT INTO {_table} (",
-        "    main_account_id, company_id, accounting_date, value_type_id,",
-        "    amount, budget_amount,",
-        "    currency_id, settlement_type_id,",
-        "    cost_object_id, item_group_id,",
-        "    cost_center_id, project_id, it_category_id, financial_dimension_id",
+        f"    {col_str}",
         ") VALUES",
     ]
 
+    # Map column names to row values
     for i, r in enumerate(sorted_rows):
         sep = "," if i < len(sorted_rows) - 1 else ";"
-        lines.append(
-            f"    ({r['account']}, {_company}, '{r['date']}', {scenario_id}, "
-            f"{r['amount']}, {r['budget_amount']}, "
-            f"{_sql_val(r.get('currency_id'))}, {_sql_val(r.get('settlement_type_id'))}, "
-            f"{_sql_val(r.get('cost_object_id'))}, {_sql_val(r.get('item_group_id'))}, "
-            f"{_sql_val(r.get('cost_center_id'))}, {_sql_val(r.get('project_id'))}, "
-            f"{_sql_val(r.get('it_category_id'))}, {_sql_val(r.get('financial_dimension_id'))}){sep}"
-        )
+        vals = []
+        for col in sql_cols:
+            if col == "main_account_id":
+                vals.append(str(r["account"]))
+            elif col == "company_id":
+                vals.append(str(_company))
+            elif col == "accounting_date":
+                vals.append(f"'{r['date']}'")
+            elif col == "value_type_id":
+                vals.append(str(scenario_id))
+            elif col == "amount":
+                vals.append(str(r["amount"]))
+            elif col == "budget_amount":
+                vals.append(str(r["budget_amount"]))
+            else:
+                vals.append(_sql_val(r.get(col)))
+        lines.append(f"    ({', '.join(vals)}){sep}")
 
     lines += [
         "",
         "-- Verify:",
-        f"-- SELECT main_account_id, accounting_date, cost_object_id, amount, budget_amount",
+        f"-- SELECT {', '.join(sql_cols[:5])}",
         f"-- FROM {_table}",
         f"-- WHERE company_id={_company} AND value_type_id={scenario_id}",
         "-- ORDER BY accounting_date, main_account_id;",

@@ -914,7 +914,7 @@ def scenario_preview():
     """
     Preview the GL impact of all staged adjustments.
 
-    Applies adjustments to the in-memory budget rows and returns a pivot:
+    Applies adjustments to the in-memory baseline rows and returns a pivot:
       accounts × months → {original, scenario, delta}
     plus column totals, row totals, and optionally cashflow impact.
     """
@@ -923,7 +923,7 @@ def scenario_preview():
             return jsonify({"ok": False, "error": "Agent not initialised"})
         if not _scenario_agent.rows:
             return jsonify({"ok": False,
-                            "error": "No budget data loaded — ask the agent to load the budget first."})
+                            "error": "No baseline data loaded — ask the agent to fetch data first."})
         if not _scenario_agent.staged:
             return jsonify({"ok": False, "error": "No adjustments staged yet."})
 

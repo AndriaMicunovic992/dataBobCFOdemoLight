@@ -30,7 +30,7 @@ ui.html (Single-page web UI)
 ## Key Patterns
 
 - **ModelUnderstanding** is the central contract between discovery and scenario phases. All model-specific knowledge (tables, accounts, queries, relationships) lives here — no hardcoded constants.
-- **Template-based queries**: `query_templates` in ModelUnderstanding drive all data access. Templates use `{year}`, `{month_filter}`, `{company_id}`, `{value_type_id}` placeholders.
+- **Template-based queries**: `query_templates` in ModelUnderstanding drive all data access. Templates use `{year}`, `{month_filter}`, `{company_id}`, `{value_type_id}` placeholders. The baseline query (key: `fetch_baseline`, legacy: `fetch_budget`) is NOT necessarily budget — it can be any value type, switched at runtime via `{value_type_id}`.
 - **Stage → Apply workflow**: Adjustments accumulate via ` ```stage ` JSON blocks across turns. SQL is only generated when user confirms via ` ```apply ` block.
 - **Async agents, sync Flask**: Agents are async (for MCP/data source calls). Flask runs in threads. A background asyncio event loop + `_run(coro)` helper bridges them.
 - **Thread safety**: Global `_lock` in server.py protects shared state mutations.
