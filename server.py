@@ -194,6 +194,7 @@ def connect():
             from config import POWERBI_EXE
             source = PBIDesktopSource(POWERBI_EXE)
             _run(source.connect(connection_string=conn_str, database=db_guid))
+            source._display_name = data.get("display_name", conn_str)
             _source = source
             _cf_structure = None  # reset CF cache for new connection
 
@@ -422,23 +423,37 @@ def model_overview():
             data = _storage.load_model_understanding_by_model(_current_model_id)
         if not data and _source:
             data = _storage.load_model_understanding(_source.source_id())
-        if not data:
-            return jsonify({"ok": True, "data": None})
 
-        clean = {k: v for k, v in data.items() if not k.startswith("_")}
+        clean = {k: v for k, v in data.items() if not k.startswith("_")} if data else {}
         tables = clean.get("tables", {})
 
-        # Sources with connection status
+        # Sources: from model links + currently connected source
         sources = []
+        linked_source_ids = set()
         if _current_model_id:
             for s in _storage.get_model_sources(_current_model_id):
+                sid = s.get("source_id", "")
+                linked_source_ids.add(sid)
                 sources.append({
                     "link_id": s.get("id"),
                     "label": s.get("label", s.get("source_type", "")),
                     "source_type": s.get("source_type", ""),
+                    "source_id": sid,
                     "connected": (_source is not None and
-                                  _source.source_id() == s.get("source_id")),
+                                  _source.source_id() == sid),
                 })
+        # Always show the currently connected source even if not linked
+        if _source is not None and _source.source_id() not in linked_source_ids:
+            sources.append({
+                "link_id": "",
+                "label": _source.display_name(),
+                "source_type": _source.source_type(),
+                "source_id": _source.source_id(),
+                "connected": True,
+            })
+
+        if not data and not sources:
+            return jsonify({"ok": True, "data": None})
 
         overview = {
             "model_name": clean.get("model_name", ""),
@@ -455,7 +470,8 @@ def model_overview():
             ],
             "relationships": clean.get("relationships", []),
             "query_templates": list(clean.get("query_templates", {}).keys()),
-            "has_account_structure": bool(clean.get("account_structure", {}).get("groups")),
+            "account_structures": clean.get("account_structures", {}),
+            "account_structure": clean.get("account_structure", {}),
             "filter_dimensions": list(clean.get("filter_dimensions", {}).keys()),
             "sources": sources,
             "measures": [
@@ -509,9 +525,11 @@ def patch_understanding():
         meta = mu_data.get("_meta", {})
         clean = {k: v for k, v in mu_data.items() if not k.startswith("_")}
 
-        # Apply deep merge
-        from discovery.model_understanding import _deep_merge
-        _deep_merge(clean, patch)
+        # Each key in the patch represents a full section replacement.
+        # Direct assignment instead of deep merge so that deletions
+        # (e.g. removing a table) are properly reflected.
+        for key, value in patch.items():
+            clean[key] = value
 
         _storage.save_model_understanding(
             meta.get("source_id", _source.source_id() if _source else ""),
@@ -531,9 +549,36 @@ def patch_understanding():
         return jsonify({"ok": True})
 
 
+# ── Routes: Schema Cache ─────────────────────────────────────────────────────
+
+@app.route("/api/schema/cached")
+def get_cached_schema():
+    """Return the cached raw schema from the discovery agent (if available)."""
+    with _lock:
+        if _discovery_agent and _discovery_agent._schema_cache:
+            schema = _discovery_agent._schema_cache
+            # Return a slimmed-down version for the UI pickers
+            tables = []
+            for t in schema.get("tables", []):
+                tables.append({
+                    "name": t.get("name", ""),
+                    "columns": [c.get("name", "") for c in t.get("columns", [])],
+                    "is_hidden": t.get("is_hidden", False),
+                })
+            relationships = schema.get("relationships", [])
+            measures = schema.get("measures", [])
+            return jsonify({
+                "ok": True,
+                "tables": tables,
+                "relationships": relationships,
+                "measures": measures,
+            })
+        return jsonify({"ok": True, "tables": [], "relationships": [], "measures": []})
+
+
 # ── Routes: Scenario Base Types ──────────────────────────────────────────────
 
-_scenario_base_type: str = "budget"
+_scenario_base_type: str | None = None  # auto-detect from ModelUnderstanding
 
 
 @app.route("/api/scenario/base-types")
@@ -544,14 +589,18 @@ def get_base_types():
         if _source:
             mu = _load_mu(_source, model_id=_current_model_id)
         if not mu:
-            return jsonify({"ok": True, "types": [], "active": "budget"})
+            return jsonify({"ok": True, "types": [], "active": None})
 
         stv = mu.scenario_type_values
         types = [
             {"key": k, "value": v, "label": k.replace("_", " ").title()}
             for k, v in stv.items()
         ]
-        return jsonify({"ok": True, "types": types, "active": _scenario_base_type})
+        # Auto-detect: prefer "actuals", then first available key
+        active = _scenario_base_type
+        if active is None and stv:
+            active = "actuals" if "actuals" in stv else next(iter(stv))
+        return jsonify({"ok": True, "types": types, "active": active})
 
 
 @app.route("/api/scenario/set-base", methods=["POST"])
@@ -560,7 +609,7 @@ def set_base_type():
     global _scenario_base_type
     with _lock:
         data = request.get_json() or {}
-        _scenario_base_type = data.get("base_type", "budget")
+        _scenario_base_type = data.get("base_type") or None
         # Reset rows so next query uses the new base
         if _scenario_agent:
             _scenario_agent.rows = []

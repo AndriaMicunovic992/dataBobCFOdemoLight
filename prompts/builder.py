@@ -104,19 +104,26 @@ class PromptBuilder:
                  "includes a full account breakdown with names and groups pulled "
                  "live from the data source."]
 
-        groups = mu.account_groups
-        if groups:
-            lines.append("\nAccount groups for adjustments:")
-            for gname, ginfo in groups.items():
-                ids = ginfo.get("account_ids", [])
-                desc = ginfo.get("description", "")
-                id_str = ",".join(str(i) for i in ids[:5])
-                if len(ids) > 5:
-                    id_str += f"... ({len(ids)} total)"
-                lines.append(
-                    f'  account_group="{gname}" → {desc} (IDs: {id_str})'
-                )
+        structures = mu.account_structures
+        for purpose, struct in structures.items():
+            label = purpose.upper()
+            table = struct.get("account_table", "")
+            if table:
+                lines.append(f"\n{label} account structure (table: {table}):")
+            groups = struct.get("groups", {})
+            if groups:
+                lines.append(f"  Account groups for {label} adjustments:")
+                for gname, ginfo in groups.items():
+                    ids = ginfo.get("account_ids", [])
+                    desc = ginfo.get("description", "")
+                    id_str = ",".join(str(i) for i in ids[:5])
+                    if len(ids) > 5:
+                        id_str += f"... ({len(ids)} total)"
+                    lines.append(
+                        f'    account_group="{gname}" → {desc} (IDs: {id_str})'
+                    )
 
+        if structures:
             lines.append('\nSpecific subset: account_group="112,114" '
                         '(comma-separated IDs).')
 

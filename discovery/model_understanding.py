@@ -94,11 +94,32 @@ class ModelUnderstanding:
         """e.g. {"actuals": 1, "budget": 2, "scenario_base": 3}"""
         return self.scenario_target.get("scenario_type_values", {})
 
-    # ── Account Structure ──────────────────────────────────────────────────
+    # ── Account Structures ─────────────────────────────────────────────────
+
+    @property
+    def account_structures(self) -> dict[str, dict]:
+        """
+        Multiple account structures keyed by purpose (e.g. "pl", "cf").
+        Backward-compatible: reads from `account_structures` or falls back to
+        wrapping legacy `account_structure` as {"pl": ...}.
+        """
+        multi = self.raw.get("account_structures")
+        if multi:
+            return multi
+        # Legacy fallback: single account_structure → wrap as "pl"
+        single = self.raw.get("account_structure", {})
+        if single:
+            return {"pl": single}
+        return {}
 
     @property
     def account_structure(self) -> dict:
-        return self.raw.get("account_structure", {})
+        """Primary (first) account structure. Backward-compatible accessor."""
+        structs = self.account_structures
+        if not structs:
+            return {}
+        # Return "pl" if available, otherwise first entry
+        return structs.get("pl", next(iter(structs.values())))
 
     @property
     def account_table(self) -> str:

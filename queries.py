@@ -351,10 +351,14 @@ async def fetch_budget_generic(source: DataSource,
         month_list = ", ".join(str(m) for m in months)
         month_filter = f" AND EXTRACT(MONTH FROM {mu.date_column}) IN ({month_list})"
 
-    # Resolve value_type_id: override → default budget value
+    # Resolve value_type_id: override → actuals → budget → first available
     stv = mu.scenario_type_values
-    default_vt = stv.get("budget", stv.get("scenario_base", ""))
-    vt_id = value_type_override if value_type_override is not None else default_vt
+    if value_type_override is not None:
+        vt_id = value_type_override
+    elif stv:
+        vt_id = stv.get("actuals", stv.get("budget", stv.get("scenario_base", next(iter(stv.values())))))
+    else:
+        vt_id = ""
 
     # Fill template
     query = template.format(
