@@ -579,7 +579,8 @@ def get_cached_schema():
 # ── Routes: Scenario Base Types ──────────────────────────────────────────────
 
 _scenario_base_type: str | None = None  # auto-detect from ModelUnderstanding
-_scenario_year: int | None = None  # user-selected scenario year
+_baseline_year: int | None = None      # year of data to load as baseline
+_scenario_year: int | None = None      # year the scenario adjustments apply to
 
 
 @app.route("/api/scenario/base-types")
@@ -619,24 +620,39 @@ def set_base_type():
 
 @app.route("/api/scenario/year")
 def get_scenario_year():
-    """Return the current scenario year setting."""
+    """Return the current baseline and scenario year settings."""
     from datetime import datetime
     current_year = datetime.now().year
-    year = _scenario_year or current_year
-    return jsonify({"ok": True, "year": year})
+    return jsonify({
+        "ok": True,
+        "baseline_year": _baseline_year or current_year,
+        "scenario_year": _scenario_year or current_year,
+    })
 
 
 @app.route("/api/scenario/set-year", methods=["POST"])
 def set_scenario_year():
-    """Set the scenario year. Clears loaded data so next query uses the new year."""
-    global _scenario_year
+    """Set baseline and/or scenario year. Clears data only when baseline year changes."""
+    global _baseline_year, _scenario_year
     with _lock:
         data = request.get_json() or {}
-        _scenario_year = int(data.get("year", 0)) or None
-        # Reset rows so next query uses the new year
-        if _scenario_agent:
+        old_baseline = _baseline_year
+
+        if "baseline_year" in data:
+            _baseline_year = int(data["baseline_year"]) or None
+        if "scenario_year" in data:
+            _scenario_year = int(data["scenario_year"]) or None
+
+        # Only clear loaded data when the baseline year changes
+        # (scenario year changes don't require reloading data)
+        if _baseline_year != old_baseline and _scenario_agent:
             _scenario_agent.rows = []
-        return jsonify({"ok": True, "year": _scenario_year})
+
+        return jsonify({
+            "ok": True,
+            "baseline_year": _baseline_year,
+            "scenario_year": _scenario_year,
+        })
 
 
 # ── Routes: Model CRUD ────────────────────────────────────────────────────────
@@ -884,6 +900,7 @@ def chat():
         try:
             # Apply base type and year overrides
             _scenario_agent.base_type = _scenario_base_type
+            _scenario_agent.baseline_year = _baseline_year
             _scenario_agent.scenario_year = _scenario_year
             reply = _run(_scenario_agent.chat(msg))
             sql_files = sorted(OUTPUT_DIR.glob("scenario_*.sql"),
@@ -967,7 +984,8 @@ def scenario_preview():
         orig_rows = _scenario_agent.rows
         sc_rows   = build_scenario(orig_rows, all_adjs,
                                    revenue_accs=rev_accs,
-                                   cogs_accs=cogs_accs)
+                                   cogs_accs=cogs_accs,
+                                   target_year=_scenario_year)
 
         # Diagnostic: check if adjustments actually changed anything
         changed_count = sum(1 for o, s in zip(orig_rows, sc_rows)

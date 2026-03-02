@@ -1420,17 +1420,24 @@
     </div>
   </div>
 
-  <!-- -- Baseline Selector -- -->
+  <!-- -- Baseline & Scenario Selector -- -->
   <div class="zone-quick" id="base-selector-zone" style="display:none">
     <div class="zone-hd zone-bd">
-      <span class="zone-title">Baseline</span>
+      <span class="zone-title">Baseline & Scenario</span>
     </div>
-    <div style="padding:4px 10px 8px; display:flex; gap:6px; align-items:center">
-      <select class="base-select" id="base-type-select" onchange="setBaseType(this.value)" style="flex:1">
+    <div style="padding:4px 10px 2px; display:flex; gap:6px; align-items:center">
+      <span style="font-size:11px; color:#999; width:50px">Load:</span>
+      <select class="base-select" id="base-type-select"
+              onchange="setBaseType(this.value)" style="flex:1">
         <option value="budget">Budget</option>
       </select>
-      <select class="base-select" id="year-select" onchange="setScenarioYear(this.value)" style="width:80px">
-      </select>
+      <select class="base-select" id="baseline-year-select"
+              onchange="setBaselineYear(this.value)" style="width:80px"></select>
+    </div>
+    <div style="padding:2px 10px 8px; display:flex; gap:6px; align-items:center">
+      <span style="font-size:11px; color:#999; width:50px">Apply:</span>
+      <select class="base-select" id="scenario-year-select"
+              onchange="setScenarioYear(this.value)" style="flex:1"></select>
     </div>
   </div>
 
@@ -2548,22 +2555,40 @@ async function setBaseType(type) {
   } catch(e) { /* ignore */ }
 }
 
-// ── Year Selector ────────────────────────────────────────────────
+// ── Year Selectors ──────────────────────────────────────────────
+function _populateYearDropdown(sel, selectedYear) {
+  sel.innerHTML = '';
+  for (let y = selectedYear - 2; y <= selectedYear + 2; y++) {
+    const opt = document.createElement('option');
+    opt.value = y;
+    opt.textContent = y;
+    if (y === selectedYear) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
 async function loadYearSelector() {
   try {
     const r = await fetch('/api/scenario/year').then(r => r.json());
     if (!r.ok) return;
-    const sel = document.getElementById('year-select');
-    const currentYear = r.year || new Date().getFullYear();
-    sel.innerHTML = '';
-    // Offer a range: current year -2 to +2
-    for (let y = currentYear - 2; y <= currentYear + 2; y++) {
-      const opt = document.createElement('option');
-      opt.value = y;
-      opt.textContent = y;
-      if (y === currentYear) opt.selected = true;
-      sel.appendChild(opt);
-    }
+    const now = new Date().getFullYear();
+    const baselineYear = r.baseline_year || now;
+    const scenarioYear = r.scenario_year || now;
+    const blSel = document.getElementById('baseline-year-select');
+    const scSel = document.getElementById('scenario-year-select');
+    if (blSel) _populateYearDropdown(blSel, baselineYear);
+    if (scSel) _populateYearDropdown(scSel, scenarioYear);
+  } catch(e) { /* ignore */ }
+}
+
+async function setBaselineYear(year) {
+  try {
+    await fetch('/api/scenario/set-year', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({baseline_year: parseInt(year, 10)}),
+    });
+    toast(`Baseline year: ${year}`);
   } catch(e) { /* ignore */ }
 }
 
@@ -2572,9 +2597,9 @@ async function setScenarioYear(year) {
     await fetch('/api/scenario/set-year', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({year: parseInt(year, 10)}),
+      body: JSON.stringify({scenario_year: parseInt(year, 10)}),
     });
-    toast(`Year: ${year}`);
+    toast(`Scenario year: ${year}`);
   } catch(e) { /* ignore */ }
 }
 
