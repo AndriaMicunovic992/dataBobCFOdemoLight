@@ -21,9 +21,10 @@ from config import OUTPUT_DIR
 
 def build_scenario(rows: list[dict], adjustments: list[dict],
                    revenue_accs: set[int] | None = None,
-                   cogs_accs: set[int] | None = None) -> list[dict]:
+                   cogs_accs: set[int] | None = None,
+                   target_year: int | None = None) -> list[dict]:
     """
-    Apply a list of adjustments to budget rows.
+    Apply a list of adjustments to baseline rows.
 
     Each adjustment dict supports:
         months        — list of month numbers (1-12); omit for full year
@@ -34,10 +35,12 @@ def build_scenario(rows: list[dict], adjustments: list[dict],
     Exactly one of pct_change or abs_change should be provided per adjustment.
 
     Args:
-        rows:         Budget baseline rows.
+        rows:         Baseline rows (from any year/value type).
         adjustments:  List of adjustment dicts.
         revenue_accs: Set of revenue account IDs from ModelUnderstanding.
         cogs_accs:    Set of COGS account IDs from ModelUnderstanding.
+        target_year:  If set and different from the baseline year, shift all
+                      dates to this year (e.g. load 2025 actuals → apply as 2026).
 
     Returns a new list of row dicts with amount and budget_amount scaled.
     All other FK columns (currency_id, cost_object_id, …) are preserved as-is.
@@ -81,6 +84,13 @@ def build_scenario(rows: list[dict], adjustments: list[dict],
             for r in matching:
                 r["amount"]        = round(r["amount"]        * (1 + pct), 2)
                 r["budget_amount"] = round(r["budget_amount"] * (1 + pct), 2)
+
+    # Shift dates to target year if it differs from the baseline year
+    if target_year and scenario:
+        base_year = int(scenario[0]["date"][:4])
+        if target_year != base_year:
+            for r in scenario:
+                r["date"] = str(target_year) + r["date"][4:]
 
     return scenario
 
