@@ -170,8 +170,9 @@ class Agent:
         self.rows : list[dict] = []   # in-memory budget data
         self.staged: list[dict] = []  # staged adjustment groups [{description, adjustments}]
         self.next_scenario_id  = 3    # increments with each applied scenario
-        self.base_type: str | None = None  # override for value_type (set by server)
-        self.scenario_year: int | None = None  # override for default year (set by server)
+        self.base_type: str | None = None      # override for value_type (set by server)
+        self.baseline_year: int | None = None  # year of data to load (set by server)
+        self.scenario_year: int | None = None  # year the scenario applies to (set by server)
 
         # Build prompt and tools dynamically from ModelUnderstanding
         self._system_prompt = PromptBuilder.build(mu)
@@ -205,7 +206,7 @@ class Agent:
     async def _handle_tool(self, name: str, inp: dict) -> str:
         if name == "run_query" or name == "run_dax_query":
             from datetime import datetime as _dt
-            default_year = self.scenario_year or _dt.now().year
+            default_year = self.baseline_year or self.scenario_year or _dt.now().year
             year   = inp.get("year", default_year)
             months = inp.get("months")
 
@@ -234,7 +235,8 @@ class Agent:
     async def _handle_query_customers(self, inp: dict) -> str:
         """Handle query_customers tool using ModelUnderstanding query templates."""
         from datetime import datetime as _dt
-        default_year = (self.scenario_year or _dt.now().year) - 1  # prior year for actuals
+        base = self.baseline_year or self.scenario_year or _dt.now().year
+        default_year = base - 1  # prior year for actuals
         year   = inp.get("year", default_year)
         top_n  = inp.get("top_n", 10)
         search = inp.get("search_name", "").strip()
@@ -370,7 +372,8 @@ class Agent:
 
                 sc   = build_scenario(self.rows, all_adjs,
                                       revenue_accs=rev_accs,
-                                      cogs_accs=cogs_accs)
+                                      cogs_accs=cogs_accs,
+                                      target_year=self.scenario_year)
                 sql  = make_sql(sc, apply_spec["label"],
                                 apply_spec.get("description", ""),
                                 scenario_id=scenario_id,
