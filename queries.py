@@ -488,5 +488,84 @@ async def fetch_account_map_generic(source: DataSource,
     return result
 
 
+# ── Generic Template Execution ───────────────────────────────────────────────
+
+
+class _SafeFormatDict(dict):
+    """Dict that returns the placeholder itself for missing keys."""
+    def __missing__(self, key):
+        return f"{{{key}}}"
+
+
+async def run_template_query(source: DataSource,
+                             mu: ModelUnderstanding,
+                             template_name: str,
+                             year: int | None = None,
+                             months: list[int] | None = None,
+                             value_type_override: int | None = None) -> list[dict]:
+    """
+    Execute any named query template from ModelUnderstanding.
+
+    For 'fetch_baseline' / 'fetch_budget', delegates to fetch_baseline().
+    For custom templates, fills standard placeholders and returns parsed rows.
+    Custom templates may not use all standard placeholders — missing ones are
+    left untouched via _SafeFormatDict.
+    """
+    if template_name in ("fetch_baseline", "fetch_budget"):
+        return await fetch_baseline(source, mu, year or 2026, months,
+                                    value_type_override=value_type_override)
+
+    template = mu.get_query_template(template_name)
+    if not template:
+        available = ", ".join(mu.query_templates.keys()) or "(none)"
+        raise RuntimeError(
+            f"No query template named '{template_name}' in model understanding. "
+            f"Available: {available}"
+        )
+
+    # Build month filter
+    month_filter = ""
+    if months and mu.query_language == "DAX":
+        month_filter = " && (" + " || ".join(
+            f"MONTH('{mu.fact_table}'[{mu.date_column}])={m}" for m in months
+        ) + ")"
+    elif months and mu.query_language == "SQL":
+        month_list = ", ".join(str(m) for m in months)
+        month_filter = f" AND EXTRACT(MONTH FROM {mu.date_column}) IN ({month_list})"
+
+    # Resolve value_type_id
+    stv = mu.scenario_type_values
+    if value_type_override is not None:
+        vt_id = value_type_override
+    elif stv:
+        vt_id = stv.get("actuals", stv.get("budget",
+                 stv.get("scenario_base", next(iter(stv.values())))))
+    else:
+        vt_id = ""
+
+    # Fill placeholders — use SafeFormatDict so templates missing some
+    # placeholders (like custom ones without {year}) don't raise KeyError
+    params = _SafeFormatDict(
+        year=year or "",
+        month_filter=month_filter,
+        company_id=mu.company_id or "",
+        value_type_id=vt_id,
+    )
+    query = template.format_map(params)
+
+    print(f"[Query] Executing template '{template_name}'"
+          + (f" year={year}" if year else "") + "...")
+    print(f"[Query] SQL/DAX: {query[:200]}...")
+    resp = await source.query(query)
+
+    if not resp.get("success"):
+        raise RuntimeError(f"Query '{template_name}' failed: "
+                           f"{resp.get('message', 'unknown error')}")
+
+    rows = _parse_response_rows(resp)
+    print(f"[Query] Template '{template_name}' returned {len(rows)} rows")
+    return rows
+
+
 # Backward-compatible alias
 fetch_budget_generic = fetch_baseline

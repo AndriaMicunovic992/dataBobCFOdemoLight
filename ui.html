@@ -2552,6 +2552,7 @@ async function setBaseType(type) {
       body: JSON.stringify({base_type: type}),
     });
     toast(`Baseline: ${type}`);
+    updateBaselineLabel();
   } catch(e) { /* ignore */ }
 }
 
@@ -2578,6 +2579,7 @@ async function loadYearSelector() {
     const scSel = document.getElementById('scenario-year-select');
     if (blSel) _populateYearDropdown(blSel, baselineYear);
     if (scSel) _populateYearDropdown(scSel, scenarioYear);
+    updateBaselineLabel();
   } catch(e) { /* ignore */ }
 }
 
@@ -2589,6 +2591,7 @@ async function setBaselineYear(year) {
       body: JSON.stringify({baseline_year: parseInt(year, 10)}),
     });
     toast(`Baseline year: ${year}`);
+    updateBaselineLabel();
   } catch(e) { /* ignore */ }
 }
 
@@ -2600,7 +2603,22 @@ async function setScenarioYear(year) {
       body: JSON.stringify({scenario_year: parseInt(year, 10)}),
     });
     toast(`Scenario year: ${year}`);
+    updateBaselineLabel();
   } catch(e) { /* ignore */ }
+}
+
+function updateBaselineLabel() {
+  const bt = document.getElementById('base-type-select');
+  const bl = document.getElementById('baseline-year-select');
+  const sc = document.getElementById('scenario-year-select');
+  const title = document.querySelector('#base-selector-zone .zone-title');
+  if (!title || !bt || !bl || !sc) return;
+  const baseLabel = bt.options[bt.selectedIndex]?.text || '';
+  const baseYear = bl.value || '';
+  const scYear = sc.value || '';
+  title.textContent = baseLabel && baseYear
+    ? `${baseLabel} ${baseYear} \u2192 ${scYear}`
+    : 'Baseline & Scenario';
 }
 
 async function refreshScenarioAgent() {
@@ -3622,9 +3640,40 @@ async function refreshModelsList() {
 }
 
 /** Activate (open) a saved model. */
+/** Reset scenario UI state when switching models. */
+function resetSessionUI() {
+  // Clear scenario chat (keep discovery chat per user preference)
+  const scenarioMsgs = document.getElementById("messages");
+  if (scenarioMsgs) scenarioMsgs.innerHTML = "";
+
+  // Clear staged adjustments DOM
+  const stagedList = document.getElementById("staged-list");
+  if (stagedList) {
+    stagedList.innerHTML =
+      '<div class="no-staged">No adjustments staged yet.<br>Describe your scenario in the chat.</div>';
+  }
+  const stagedControls = document.getElementById("staged-controls");
+  if (stagedControls) stagedControls.style.display = "none";
+  const badge = document.getElementById("staged-badge");
+  if (badge) badge.style.display = "none";
+  const scenarioName = document.getElementById("scenario-name");
+  if (scenarioName) scenarioName.value = "";
+
+  // Reset selectors
+  const btSel = document.getElementById("base-type-select");
+  if (btSel) btSel.innerHTML = '<option value="budget">Budget</option>';
+  const blSel = document.getElementById("baseline-year-select");
+  if (blSel) blSel.innerHTML = "";
+  const scSel = document.getElementById("scenario-year-select");
+  if (scSel) scSel.innerHTML = "";
+}
+
 async function activateModel(modelId) {
   toast("Activating model...");
   try {
+    // Clear scenario UI state for clean slate
+    resetSessionUI();
+
     const r = await fetch(`/api/models/${modelId}/activate`, { method: "POST" }).then(res => res.json());
     if (r.ok) {
       setCurrentModel(modelId, r.model ? r.model.name : null);
@@ -3643,6 +3692,11 @@ async function activateModel(modelId) {
       if (r.reconnected) sysMsg += " Data source reconnected.";
       sysMsg += r.has_understanding ? " Understanding loaded." : " No understanding yet — go to Data Understanding.";
       addSystemMsg(sysMsg);
+
+      // Reload selectors for the new model
+      loadBaseTypes();
+      loadYearSelector();
+
       refreshModelStatus();
       closeModelsModal();
       toast(r.reconnected ? "Model activated & source reconnected" : "Model activated");

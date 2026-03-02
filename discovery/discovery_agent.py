@@ -131,22 +131,31 @@ When calling save_understanding, provide JSON with this structure:
 The scenario agent CANNOT function without working query templates. You MUST include these
 two templates in every model understanding. Templates use Python format placeholders.
 
-IMPORTANT: The baseline data is NOT necessarily budget data. It can be actuals, forecasts,
-or any value type depending on the model. The {value_type_id} placeholder allows the system
-to switch between value types at runtime.
+IMPORTANT: Templates define the STRUCTURE of data retrieval (tables, columns, joins) —
+NOT specific parameter values. All parameters are filled at RUNTIME by the scenario system
+based on user selections in the UI. Do NOT describe templates as tied to any particular
+year, value type, or time range.
+
+You may also create CUSTOM query templates (e.g. "revenue_per_customer",
+"monthly_trend") that the scenario agent can execute via the run_custom_query tool.
+Custom templates can use the same runtime placeholders ({year}, {company_id}, etc.)
+or define their own parameters.
 
 --- fetch_baseline ---
-Purpose: Fetch all baseline rows for a given year. The scenario agent uses this
-data to apply percentage or absolute adjustments. The value type (actuals, budget,
-forecast, etc.) is determined at runtime via the {value_type_id} placeholder.
+Purpose: Reusable template for fetching baseline rows. The scenario system fills in
+ALL placeholders at runtime — the template should NOT assume any particular year,
+value type, or time range. It defines the STRUCTURE (which tables, columns, joins),
+not the PARAMETERS (which year, which value type).
 
-Required placeholders:
-  {year}          — integer, e.g. 2026
+The user selects the baseline year and value type in the Scenario tab at runtime.
+
+Runtime placeholders (filled automatically by the scenario system):
+  {year}          — integer, selected by the user in the Scenario tab
   {month_filter}  — string, auto-built by the system. Will be empty string for full year,
                     or a DAX/SQL filter clause for specific months. Your template must
                     place this where an additional AND/&& clause can be appended.
-  {company_id}    — integer or string, company/entity filter value
-  {value_type_id} — integer, the value type to filter by (e.g. 1=actuals, 2=budget).
+  {company_id}    — integer or string, from model config
+  {value_type_id} — integer, selected by user in the Scenario tab (e.g. 1=actuals, 2=budget).
                     CRITICAL: Do NOT hardcode a specific value — use this placeholder
                     so the system can switch between value types at runtime.
 
@@ -237,9 +246,10 @@ If the model has a customer dimension with invoice/sales data, you can optionall
 == VALIDATION ==
 Before saving the understanding, you MUST:
 1. Build the fetch_baseline template with actual table/column names from the schema
-2. Test it with run_test_query (use a concrete year, e.g. 2025 or 2026, and fill
-   {month_filter} with empty string, {company_id} with the actual company ID,
-   {value_type_id} with a real value type from the model)
+2. Test it with run_test_query — fill in concrete values for TESTING only:
+   e.g. year=2025, {month_filter}="", {company_id}=actual company ID,
+   {value_type_id}=a real value type. These test values are NOT part of the
+   template — the template must keep all placeholders for runtime substitution.
 3. Verify the result has columns: main_account_id, accounting_date, amount, budget_amount
 4. Build the fetch_account_map template and test it too (use a few real account IDs
    from the fetch_baseline results as the {account_ids} value)

@@ -79,6 +79,22 @@ def _init_agents(source: DataSource, mu: ModelUnderstanding | None = None,
         _scenario_agent = None
 
 
+def _refresh_scenario_agent(source: DataSource, mu: ModelUnderstanding):
+    """Reinitialize scenario agent with new MU while preserving in-flight state."""
+    global _scenario_agent
+    old = _scenario_agent
+    _scenario_agent = Agent(source, mu)
+    if old is not None:
+        _scenario_agent.rows = old.rows
+        _scenario_agent.staged = old.staged
+        _scenario_agent.next_scenario_id = old.next_scenario_id
+        _scenario_agent.conv = old.conv
+    # Re-apply server globals
+    _scenario_agent.base_type = _scenario_base_type
+    _scenario_agent.baseline_year = _baseline_year
+    _scenario_agent.scenario_year = _scenario_year
+
+
 def _try_reconnect_sources(model_id: str) -> DataSource | None:
     """Attempt to reconnect to a model's data sources. Returns DataSource or None."""
     sources = _storage.get_model_sources(model_id)
@@ -495,7 +511,7 @@ def refresh_understanding():
             return jsonify({"ok": False, "error": "No source connected"})
         mu = _load_mu(_source, model_id=_current_model_id)
         if mu is not None:
-            _scenario_agent = Agent(_source, mu)
+            _refresh_scenario_agent(_source, mu)
             return jsonify({"ok": True, "status": "refreshed"})
         else:
             return jsonify({"ok": False, "error": "No understanding found"})
@@ -538,11 +554,11 @@ def patch_understanding():
             model_id=_current_model_id,
         )
 
-        # Refresh scenario agent
+        # Refresh scenario agent (preserving in-flight state)
         mu = _load_mu(_source, model_id=_current_model_id)
         if mu is not None:
             try:
-                _scenario_agent = Agent(_source, mu)
+                _refresh_scenario_agent(_source, mu)
             except Exception:
                 pass
 
@@ -746,10 +762,16 @@ def activate_model(model_id):
     try to reconnect data sources, and reinitialise agents.
     """
     global _current_model_id, _scenario_agent, _source, _cf_structure
+    global _scenario_base_type, _baseline_year, _scenario_year
     with _lock:
         model = _storage.get_model(model_id)
         if not model:
             return jsonify({"ok": False, "error": "Model not found"}), 404
+
+        # Reset runtime parameters for the new model
+        _scenario_base_type = None
+        _baseline_year = None
+        _scenario_year = None
 
         _current_model_id = model_id
         _storage.touch_model(model_id)
