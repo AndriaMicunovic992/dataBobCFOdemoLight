@@ -21,7 +21,7 @@ from datasources.base import DataSource
 from discovery.model_understanding import ModelUnderstanding
 from prompts.builder import PromptBuilder
 from cache import cache_save, cache_load
-from queries import fetch_baseline
+from queries import fetch_baseline, run_template_query
 from scenario import build_scenario, make_sql, save_sql
 
 
@@ -227,6 +227,9 @@ class Agent:
             cache_save(rows)
             return data_summary(rows, self.mu)
 
+        if name == "run_custom_query":
+            return await self._handle_custom_query(inp)
+
         if name == "query_customers":
             return await self._handle_query_customers(inp)
 
@@ -288,6 +291,81 @@ class Agent:
 
         return "No customer dimension configured in model understanding."
 
+    async def _handle_custom_query(self, inp: dict) -> str:
+        """Execute a custom query template from ModelUnderstanding."""
+        from datetime import datetime as _dt
+        template_name = inp.get("template_name", "")
+        if not template_name:
+            return "Error: template_name is required."
+
+        default_year = self.baseline_year or self.scenario_year or _dt.now().year
+        year = inp.get("year", default_year)
+        months = inp.get("months")
+
+        vt_override = None
+        if self.base_type:
+            stv = self.mu.scenario_type_values
+            vt_override = stv.get(self.base_type)
+
+        rows = await run_template_query(
+            self.source, self.mu, template_name,
+            year=year, months=months,
+            value_type_override=vt_override,
+        )
+        if not rows:
+            return f"Query '{template_name}' returned no rows."
+        # Format for analysis but do NOT replace baseline self.rows
+        return self._format_custom_result(template_name, rows)
+
+    @staticmethod
+    def _format_custom_result(template_name: str, rows: list[dict]) -> str:
+        """Format custom query results as readable text."""
+        cols = list(rows[0].keys())
+        display_cols = cols[:8]
+        lines = [
+            f"Query '{template_name}': {len(rows)} rows, "
+            f"{len(cols)} columns.",
+            "",
+            "  " + " | ".join(f"{c:<20}" for c in display_cols),
+            "  " + "-" * min(len(display_cols) * 22, 176),
+        ]
+        for r in rows[:25]:
+            vals = [str(r.get(c, ""))[:20] for c in display_cols]
+            lines.append("  " + " | ".join(f"{v:<20}" for v in vals))
+        if len(rows) > 25:
+            lines.append(f"  ... and {len(rows) - 25} more rows")
+        return "\n".join(lines)
+
+    def _build_dynamic_context(self) -> str:
+        """Build a dynamic context section reflecting current UI selections."""
+        from datetime import datetime as _dt
+        parts = []
+        if self.base_type:
+            stv = self.mu.scenario_type_values
+            vt_id = stv.get(self.base_type, "?")
+            label = self.base_type.replace("_", " ").title()
+            parts.append(f"Baseline type: {label} "
+                         f"({self.mu.scenario_type_column}={vt_id})")
+
+        bl_year = self.baseline_year or _dt.now().year
+        sc_year = self.scenario_year or bl_year
+        parts.append(f"Baseline year: {bl_year}")
+        parts.append(f"Scenario target year: {sc_year}")
+
+        if self.rows:
+            parts.append(f"Data loaded: {len(self.rows)} rows in memory")
+        else:
+            parts.append("No data loaded yet — call run_query to fetch baseline")
+
+        if self.staged:
+            total_adj = sum(len(s["adjustments"]) for s in self.staged)
+            parts.append(
+                f"Staged: {len(self.staged)} groups, "
+                f"{total_adj} total adjustments"
+            )
+
+        return "== CURRENT SESSION STATE ==\n" + "\n".join(parts)
+
     # ── Main chat loop ────────────────────────────────────────────────────────
 
     async def chat(self, msg: str) -> str:
@@ -302,10 +380,13 @@ class Agent:
 
         self.conv.append({"role": "user", "content": msg})
 
+        # Augment system prompt with current session state
+        system_prompt = self._system_prompt + "\n\n" + self._build_dynamic_context()
+
         while True:
             resp = self.ai.messages.create(
                 model=SCENARIO_MODEL, max_tokens=1024,
-                system=self._system_prompt,
+                system=system_prompt,
                 tools=self._tools,
                 messages=self.conv,
             )

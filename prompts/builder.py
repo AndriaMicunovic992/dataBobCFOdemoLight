@@ -104,6 +104,17 @@ class PromptBuilder:
                 f"\nDefault filter: {mu.company_column} = {mu.company_id}"
             )
 
+        # List available custom query templates
+        _reserved = {"fetch_baseline", "fetch_budget", "fetch_account_map"}
+        custom_templates = [k for k in mu.query_templates
+                           if k not in _reserved]
+        if custom_templates:
+            lines.append(
+                "\nCustom query templates (use run_custom_query tool):"
+            )
+            for tname in custom_templates:
+                lines.append(f"  - {tname}")
+
         return "\n".join(lines)
 
     @staticmethod
@@ -209,6 +220,41 @@ The UI automatically computes a cashflow statement impact from ALL staged adjust
                 },
             },
         ]
+
+        # Register custom query templates as a tool if any exist
+        _reserved = {"fetch_baseline", "fetch_budget", "fetch_account_map"}
+        custom_templates = [k for k in mu.query_templates
+                           if k not in _reserved]
+        if custom_templates:
+            tools.append({
+                "name": "run_custom_query",
+                "description": (
+                    "Execute a custom query template from the model understanding. "
+                    "Use this for analytical queries beyond the baseline data. "
+                    "Results are returned for analysis but do NOT replace the "
+                    "loaded baseline data."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "required": ["template_name"],
+                    "properties": {
+                        "template_name": {
+                            "type": "string",
+                            "enum": custom_templates,
+                            "description": "Name of the custom query template",
+                        },
+                        "year": {
+                            "type": "integer",
+                            "description": "Year filter (if template uses {year})",
+                        },
+                        "months": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Specific months 1-12",
+                        },
+                    },
+                },
+            })
 
         if mu.has_customer_dimension:
             cc = mu.customer_config
