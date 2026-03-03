@@ -150,7 +150,10 @@ def _load_mu(source: DataSource,
     data = None
     if model_id:
         data = _storage.load_model_understanding_by_model(model_id)
-    if not data:
+    if not data and not model_id:
+        # Only fall back to source_id when there's no model_id.
+        # If model_id is set but has no understanding, the model genuinely
+        # has no understanding yet — don't "borrow" from another model.
         data = _storage.load_model_understanding(source.source_id())
     if not data:
         return None
@@ -351,7 +354,7 @@ def _has_confirmed_understanding() -> bool:
     data = None
     if _current_model_id:
         data = _storage.load_model_understanding_by_model(_current_model_id)
-    if not data:
+    if not data and not _current_model_id:
         data = _storage.load_model_understanding(_source.source_id())
     return data is not None and data.get("status") == "confirmed"
 
@@ -367,7 +370,7 @@ def get_understanding():
         data = None
         if _current_model_id:
             data = _storage.load_model_understanding_by_model(_current_model_id)
-        if not data:
+        if not data and not _current_model_id:
             data = _storage.load_model_understanding(_source.source_id())
         if not data:
             return jsonify({"ok": True, "data": None})
@@ -377,14 +380,14 @@ def get_understanding():
 
 @app.route("/api/model/status", methods=["GET"])
 def model_status():
-    """Check whether a confirmed understanding exists for the current source."""
+    """Check whether a confirmed understanding exists for the current model."""
     with _lock:
         if _source is None:
             return jsonify({"exists": False, "status": None})
         data = None
         if _current_model_id:
             data = _storage.load_model_understanding_by_model(_current_model_id)
-        if not data:
+        if not data and not _current_model_id:
             data = _storage.load_model_understanding(_source.source_id())
         if not data:
             return jsonify({"exists": False, "status": None})
@@ -559,8 +562,8 @@ def patch_understanding():
         if mu is not None:
             try:
                 _refresh_scenario_agent(_source, mu)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[Patch] Scenario agent refresh failed: {e}")
 
         return jsonify({"ok": True})
 
@@ -717,8 +720,9 @@ def create_model():
             label=name,
             config={"source_id": sid},
         )
-        # Retroactively link any existing understandings for this source_id
-        _storage.link_understanding_to_model(sid, model_id)
+        # NOTE: Do NOT link existing understandings here. A new model should
+        # start with a blank understanding. The old model's understanding
+        # belongs to the old model, not the new one.
     return jsonify({"ok": True, "model_id": model_id})
 
 
@@ -872,12 +876,11 @@ def discovery_chat():
         try:
             reply = _run(_discovery_agent.chat(msg))
 
-            # Auto-refresh scenario agent if understanding may have changed
-            global _scenario_agent
+            # Auto-refresh scenario agent — preserve rows/staged/conv
             mu = _load_mu(_source, model_id=_current_model_id)
             if mu is not None:
                 try:
-                    _scenario_agent = Agent(_source, mu)
+                    _refresh_scenario_agent(_source, mu)
                 except Exception:
                     pass  # MU may still be incomplete during discovery
 
@@ -909,15 +912,22 @@ def chat():
 
     with _lock:
         if _scenario_agent is None:
-            # Auto-init with connected source or empty PBI source
+            # Auto-init with connected source
             if _source is not None:
                 mu = _load_mu(_source, model_id=_current_model_id)
+                if mu is None:
+                    return jsonify({
+                        "ok": False,
+                        "error": "No model understanding found. "
+                                 "Go to Data Understanding first."
+                    }), 400
                 _scenario_agent = Agent(_source, mu)
             else:
-                # Legacy fallback — create empty PBI source
-                from config import POWERBI_EXE
-                _source = PBIDesktopSource(POWERBI_EXE)
-                _scenario_agent = Agent(_source)
+                return jsonify({
+                    "ok": False,
+                    "error": "No data source connected. "
+                             "Click Data Source to connect first."
+                }), 400
 
         try:
             # Apply base type and year overrides

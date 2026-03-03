@@ -207,13 +207,15 @@ The UI automatically computes a cashflow statement impact from ALL staged adjust
                 "name": "run_query",
                 "description": (
                     f"Fetch baseline data from {mu.fact_table or 'the fact table'}. "
-                    f"Returns a summary; data stored internally."
+                    f"Returns a summary; data stored internally. "
+                    f"The year and value type default to the user's Load selector — "
+                    f"only pass year to override."
                 ),
                 "input_schema": {
                     "type": "object",
-                    "required": ["year"],
                     "properties": {
-                        "year":   {"type": "integer", "description": "Fiscal year e.g. 2026"},
+                        "year":   {"type": "integer",
+                                   "description": "Fiscal year. Omit to use the user's selected baseline year."},
                         "months": {"type": "array", "items": {"type": "integer"},
                                    "description": "Specific months 1-12. Omit for full year."},
                     },
