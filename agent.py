@@ -155,7 +155,10 @@ class Agent:
         self.conv : list[dict] = []
         self.rows : list[dict] = []   # in-memory baseline data
         self.staged: list[dict] = []  # staged adjustment groups [{description, adjustments}]
-        self.next_scenario_id  = 3    # increments with each applied scenario
+        # Start scenario IDs after the highest known value_type_id
+        stv = mu.scenario_type_values
+        max_vt = max(stv.values()) if stv else 2
+        self.next_scenario_id  = max_vt + 1  # increments with each applied scenario
         self.base_type: str | None = None      # override for value_type (set by server)
         self.baseline_year: int | None = None  # year of data to load (set by server)
         self.scenario_year: int | None = None  # year the scenario applies to (set by server)
@@ -211,6 +214,32 @@ class Agent:
                 return "Query returned no rows. Check the connection and filters."
             self.rows = rows
             return data_summary(rows, self.mu)
+
+        if name == "explore_data":
+            query_text = inp.get("query", "")
+            if not query_text:
+                return "Error: query parameter is required."
+            print(f"[Agent] explore_data: {query_text[:200]}...")
+            try:
+                resp = await self.source.query(query_text)
+            except Exception as e:
+                return f"Query error: {e}"
+            if not resp.get("success"):
+                return f"Query failed: {resp.get('message', 'unknown error')}"
+            raw_rows = resp.get("data", {}).get("rows", [])
+            if not raw_rows:
+                return "Query returned no rows."
+            # Normalize column names and limit output
+            from queries import _parse_response_rows
+            rows = _parse_response_rows(resp)
+            if len(rows) > 200:
+                rows = rows[:200]
+            # Format as compact text table for the agent
+            cols = list(rows[0].keys())
+            lines = [" | ".join(cols)]
+            for r in rows:
+                lines.append(" | ".join(str(r.get(c, "")) for c in cols))
+            return f"{len(rows)} rows returned:\n" + "\n".join(lines)
 
         return f"Unknown tool: {name}"
 
@@ -334,7 +363,6 @@ class Agent:
                 # Get model-specific params from ModelUnderstanding
                 target_table = self.mu.sql_target_table
                 sql_columns = self.mu.sql_columns or None
-                company_id = self.mu.company_id
                 from config import OUTPUT_DIR
                 output_dir = OUTPUT_DIR
 
@@ -345,7 +373,6 @@ class Agent:
                                 apply_spec.get("description", ""),
                                 scenario_id=scenario_id,
                                 target_table=target_table,
-                                company_id=company_id,
                                 columns=sql_columns)
                 path = save_sql(sql, apply_spec["label"],
                                 scenario_id=scenario_id,

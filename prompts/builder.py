@@ -76,12 +76,6 @@ class PromptBuilder:
                 desc = dinfo.get("description", "")
                 lines.append(f"  - {d}" + (f": {desc}" if desc else ""))
 
-        # Company filter
-        if mu.company_id is not None:
-            lines.append(
-                f"\nDefault filter: {mu.company_column} = {mu.company_id}"
-            )
-
         return "\n".join(lines)
 
     @staticmethod
@@ -166,6 +160,7 @@ class PromptBuilder:
     @staticmethod
     def build_tools(mu: ModelUnderstanding) -> list[dict]:
         """Build the tool definitions dynamically from ModelUnderstanding."""
+        ql = mu.query_language or "DAX"
         tools = [
             {
                 "name": "run_query",
@@ -182,6 +177,26 @@ class PromptBuilder:
                                    "description": "Fiscal year. Omit to use the user's selected baseline year."},
                         "months": {"type": "array", "items": {"type": "integer"},
                                    "description": "Specific months 1-12. Omit for full year."},
+                    },
+                },
+            },
+            {
+                "name": "explore_data",
+                "description": (
+                    f"Run an ad-hoc {ql} query against the data source. "
+                    f"Use this to answer analytical questions like 'top customers by revenue', "
+                    f"'revenue by company', 'breakdown by cost center', etc. "
+                    f"Write the full query yourself using the data model information. "
+                    f"Returns the query result rows (max 200)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": f"A valid {ql} query to execute against the data source.",
+                        },
                     },
                 },
             },

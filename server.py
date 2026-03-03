@@ -292,8 +292,8 @@ def connect_excel():
                             "message": "No valid Excel files (.xlsx) found"}), 400
 
         try:
-            source = create_datasource("excel", file_paths=saved_paths)
-            _run(source.connect())
+            source = create_datasource("excel")
+            _run(source.connect(files=[str(p) for p in saved_paths]))
             _source = source
 
             # Auto-detect existing model if model_id not provided
