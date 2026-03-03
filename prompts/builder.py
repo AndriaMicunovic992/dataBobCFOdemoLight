@@ -2,7 +2,7 @@
 PromptBuilder — Generates scenario agent system prompts from ModelUnderstanding.
 
 Combines:
-  1. Model-specific sections (tables, accounts, relationships) — from ModelUnderstanding
+  1. Model-specific sections (tables, accounts, dimensions, structures) — from MU
   2. Workflow sections (staging, apply format, rules) — from static template
 """
 
@@ -24,11 +24,9 @@ class PromptBuilder:
         sections = [
             PromptBuilder._intro(mu),
             PromptBuilder._data_model(mu),
-            PromptBuilder._accounts(mu),
-            PromptBuilder._measures_section(mu),
-            PromptBuilder._customer_section(mu),
+            PromptBuilder._reporting_structures(mu),
+            PromptBuilder._dimensions(mu),
             _WORKFLOW_TEMPLATE,
-            PromptBuilder._cashflow_section(mu),
         ]
         return "\n\n".join(s for s in sections if s)
 
@@ -49,7 +47,7 @@ class PromptBuilder:
         # Fact table
         ft = mu.fact_table
         if ft:
-            lines.append(f"\nPrimary fact table: {ft}")
+            lines.append(f"\nPrimary fact table (General Ledger): {ft}")
             tinfo = mu.get_table(ft)
             if tinfo:
                 desc = tinfo.get("description", "")
@@ -62,26 +60,6 @@ class PromptBuilder:
             lines.append(f"\nrun_query loads baseline data from {ft}:")
             stv = mu.scenario_type_values
             if stv:
-                # Dynamically describe available value types
-                base_key = next(
-                    (k for k in ("budget", "forecast", "scenario_base")
-                     if k in stv), next(iter(stv), None)
-                )
-                base_val = stv.get(base_key) if base_key else None
-                actuals_val = stv.get("actuals")
-                if base_val is not None:
-                    base_label = base_key.replace("_", " ").title()
-                    lines.append(
-                        f"  1. {base_label} rows ({mu.scenario_type_column}="
-                        f"{base_val}) for the requested year"
-                    )
-                if actuals_val is not None:
-                    lines.append(
-                        f"  2. BS/CF actuals ({mu.scenario_type_column}="
-                        f"{actuals_val}) from the PRIOR year, aggregated by "
-                        f"account × month (for accounts without baseline rows)"
-                    )
-                # List all available value types so the agent knows what's possible
                 vt_desc = ", ".join(f"{k}={v}" for k, v in stv.items())
                 lines.append(f"  Available value types: {vt_desc}")
 
@@ -104,100 +82,86 @@ class PromptBuilder:
                 f"\nDefault filter: {mu.company_column} = {mu.company_id}"
             )
 
-        # List available custom query templates
-        _reserved = {"fetch_baseline", "fetch_budget", "fetch_account_map"}
-        custom_templates = [k for k in mu.query_templates
-                           if k not in _reserved]
-        if custom_templates:
-            lines.append(
-                "\nCustom query templates (use run_custom_query tool):"
-            )
-            for tname in custom_templates:
-                lines.append(f"  - {tname}")
-
         return "\n".join(lines)
 
     @staticmethod
-    def _accounts(mu: ModelUnderstanding) -> str:
-        lines = ["== GL ACCOUNTS ==",
-                 "Always call run_query before staging adjustments — the result "
-                 "includes a full account breakdown with names and groups pulled "
-                 "live from the data source."]
+    def _reporting_structures(mu: ModelUnderstanding) -> str:
+        """Describe P&L/BS/CF reporting structures for the agent."""
+        structures = mu.reporting_structures
+        if not structures:
+            # Fall back to legacy account_groups
+            groups = mu.account_groups
+            if not groups:
+                return ""
+            lines = ["== ACCOUNT GROUPS ==",
+                     "Available groups for account_group filter in adjustments:"]
+            for gname, ginfo in groups.items():
+                ids = ginfo.get("account_ids", [])
+                desc = ginfo.get("description", "")
+                id_str = ",".join(str(i) for i in ids[:5])
+                if len(ids) > 5:
+                    id_str += f"... ({len(ids)} total)"
+                lines.append(
+                    f'  account_group="{gname}" → {desc} (IDs: {id_str})'
+                )
+            return "\n".join(lines)
 
-        structures = mu.account_structures
-        for purpose, struct in structures.items():
-            label = purpose.upper()
-            table = struct.get("account_table", "")
-            if table:
-                lines.append(f"\n{label} account structure (table: {table}):")
-            groups = struct.get("groups", {})
-            if groups:
-                lines.append(f"  Account groups for {label} adjustments:")
-                for gname, ginfo in groups.items():
-                    ids = ginfo.get("account_ids", [])
-                    desc = ginfo.get("description", "")
+        lines = ["== REPORTING STRUCTURES ==",
+                 "These define how GL accounts are organized into financial statements.",
+                 "Use section names as account_group values in adjustments.",
+                 ""]
+
+        for key, struct in structures.items():
+            name = struct.get("name", key.upper())
+            lines.append(f"--- {name} ---")
+            for sec in struct.get("sections", []):
+                sec_name = sec["name"]
+                if sec.get("type") == "subtotal":
+                    refs = " + ".join(sec.get("sum_of", []))
+                    lines.append(f"  {sec_name} = {refs} (subtotal)")
+                else:
+                    ids = sec.get("account_ids", [])
+                    sign = sec.get("sign", 1)
+                    sign_label = "+" if sign >= 0 else "-"
                     id_str = ",".join(str(i) for i in ids[:5])
                     if len(ids) > 5:
                         id_str += f"... ({len(ids)} total)"
                     lines.append(
-                        f'    account_group="{gname}" → {desc} (IDs: {id_str})'
+                        f'  account_group="{sec_name}" [{sign_label}] → IDs: {id_str}'
                     )
+            lines.append("")
 
-        if structures:
-            lines.append('\nSpecific subset: account_group="112,114" '
-                        '(comma-separated IDs).')
+        lines.append("You can also use comma-separated account IDs directly: "
+                     'account_ids="112,114"')
 
         return "\n".join(lines)
 
     @staticmethod
-    def _measures_section(mu: ModelUnderstanding) -> str:
-        measures = mu.measures
-        if not measures:
+    def _dimensions(mu: ModelUnderstanding) -> str:
+        """Describe GL dimensions available for filter-based adjustments."""
+        gl_dims = mu.gl_dimensions
+        if not gl_dims:
             return ""
-        lines = [
-            "== DAX MEASURES ==",
-            "Available DAX measures (contain business logic, can be used in queries):",
-        ]
-        for name, info in measures.items():
-            expr = (info.get("expression") or "")[:100]
-            table = info.get("table", "")
-            lines.append(f"  [{table}][{name}] = {expr}")
+
+        lines = ["== GL DIMENSIONS ==",
+                 "The GL fact table has these dimension columns. Users can filter",
+                 "adjustments by any of these (e.g. 'increase revenue for Company A').",
+                 "Use the column name as a filter key in adjustments.",
+                 ""]
+
+        for dim in gl_dims:
+            col = dim.get("column", "")
+            label = dim.get("label", col)
+            dim_table = dim.get("dimension_table")
+            label_col = dim.get("label_column")
+            if dim_table and label_col:
+                lines.append(f"  {col} ({label}) → {dim_table}.{label_col}")
+            elif dim_table:
+                lines.append(f"  {col} ({label}) → {dim_table}")
+            else:
+                lines.append(f"  {col} ({label})")
+
         return "\n".join(lines)
-
-    @staticmethod
-    def _customer_section(mu: ModelUnderstanding) -> str:
-        if not mu.has_customer_dimension:
-            return ""
-
-        cc = mu.customer_config
-        cust_table = cc.get("customer_table", "")
-        inv_table = cc.get("invoice_table", "")
-
-        return f"""== CUSTOMER SCENARIOS ==
-Since budget rows may not have customer-level detail, customer scenarios
-are modelled via GL accounts:
-1. Call query_customers → get customer's actual revenue share % from prior year actuals
-2. Calculate net GL impact: customer_share% × requested_change% = GL_adjustment%
-3. Call run_query to load GL budget baseline
-4. Apply calculated GL_adjustment% to revenue accounts
-
-Customer data comes from {cust_table} (names) and {inv_table} (actuals).
-Always show the user the maths before staging."""
-
-    @staticmethod
-    def _cashflow_section(mu: ModelUnderstanding) -> str:
-        if not mu.has_cashflow:
-            return ""
-
-        return """== CASHFLOW & BALANCE SHEET ==
-The loaded data includes BOTH P&L budget accounts AND BS/CF accounts (based on prior-
-year actuals). You can adjust any account visible in the run_query results.
-
-The UI automatically computes a cashflow statement impact from ALL staged adjustments:
-- When the user clicks "Preview Impact", the preview shows TWO tabs:
-  1. P&L tab — account-level delta table and waterfall chart
-  2. Cashflow tab — derived cashflow statement (Operating / Investing / Financing / Net)
-- Tell the user to check the Cashflow tab in Preview Impact to see the cash effect."""
 
     @staticmethod
     def build_tools(mu: ModelUnderstanding) -> list[dict]:
@@ -222,60 +186,5 @@ The UI automatically computes a cashflow statement impact from ALL staged adjust
                 },
             },
         ]
-
-        # Register custom query templates as a tool if any exist
-        _reserved = {"fetch_baseline", "fetch_budget", "fetch_account_map"}
-        custom_templates = [k for k in mu.query_templates
-                           if k not in _reserved]
-        if custom_templates:
-            tools.append({
-                "name": "run_custom_query",
-                "description": (
-                    "Execute a custom query template from the model understanding. "
-                    "Use this for analytical queries beyond the baseline data. "
-                    "Results are returned for analysis but do NOT replace the "
-                    "loaded baseline data."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "required": ["template_name"],
-                    "properties": {
-                        "template_name": {
-                            "type": "string",
-                            "enum": custom_templates,
-                            "description": "Name of the custom query template",
-                        },
-                        "year": {
-                            "type": "integer",
-                            "description": "Year filter (if template uses {year})",
-                        },
-                        "months": {
-                            "type": "array",
-                            "items": {"type": "integer"},
-                            "description": "Specific months 1-12",
-                        },
-                    },
-                },
-            })
-
-        if mu.has_customer_dimension:
-            cc = mu.customer_config
-            inv_table = cc.get("invoice_table", "invoice lines")
-            tools.append({
-                "name": "query_customers",
-                "description": (
-                    f"Look up customers and their actual revenue share from {inv_table}. "
-                    "Use when the user mentions a customer name or 'top N customers'. "
-                    "Returns customer IDs, names, revenue totals, and % share."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "year":        {"type": "integer", "description": "Year for actuals lookup"},
-                        "top_n":       {"type": "integer", "description": "Top N customers (default 10)"},
-                        "search_name": {"type": "string",  "description": "Search by customer name"},
-                    },
-                },
-            })
 
         return tools

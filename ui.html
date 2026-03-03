@@ -1397,14 +1397,6 @@
         &#8595; Load 2026 Budget
         <span class="qb-sub">Fetch GL baseline from Power BI</span>
       </button>
-      <button class="quick-btn" onclick="quickSend('Who are the top 10 customers by revenue in 2025?')">
-        &#128101; Top 10 Customers
-        <span class="qb-sub">Ranked by 2025 actual revenue</span>
-      </button>
-      <button class="quick-btn" onclick="quickSend('Create a scenario reducing the biggest customer by 25% for the full year 2026')">
-        &#8595; Biggest Customer -25%
-        <span class="qb-sub">Auto-calculates GL impact</span>
-      </button>
       <button class="quick-btn" onclick="quickSend('Create a 2026 scenario with +3% revenue across all months')">
         &#8593; Revenue +3% Full Year
         <span class="qb-sub">All revenue accounts</span>
@@ -1540,14 +1532,9 @@
         <span class="modal-title">GL Impact Preview</span>
         <div class="preview-summary" id="preview-summary">Loading...</div>
       </div>
-      <div class="preview-tabs">
-        <button class="ptab active" id="ptab-pl" onclick="setPreviewTab('pl')">P&L</button>
-        <button class="ptab"        id="ptab-cf" onclick="setPreviewTab('cf')">Cashflow</button>
-      </div>
       <div class="view-toggle" id="pl-view-toggle">
         <button class="vt-btn active" id="vt-delta"     onclick="setPreviewMode('delta')">&#916; Delta</button>
         <button class="vt-btn"        id="vt-compare"   onclick="setPreviewMode('compare')">&#8863; Compare</button>
-        <button class="vt-btn"        id="vt-waterfall" onclick="setPreviewMode('waterfall')">&#8862; Waterfall</button>
       </div>
       <button class="m-btn" onclick="closePreview()">&#10005;</button>
     </div>
@@ -3124,10 +3111,8 @@ function setPreviewMode(mode, rerender = true) {
   _previewMode = mode;
   document.getElementById("vt-delta").classList.toggle("active",     mode === "delta");
   document.getElementById("vt-compare").classList.toggle("active",   mode === "compare");
-  document.getElementById("vt-waterfall").classList.toggle("active", mode === "waterfall");
   if (rerender && _previewData) {
-    if (_previewTab === "cf") renderCashflowPreview();
-    else                      renderPreview();
+    renderPreview();
   }
 }
 
@@ -3190,9 +3175,6 @@ function renderPreview() {
     const scen = grp.accounts.reduce((s, a) => s + a.total.scenario, 0);
     grp.total = { original: orig, scenario: scen, delta: scen - orig };
   }
-
-  // ── Waterfall view ──────────────────────────────────────────────────────
-  if (_previewMode === 'waterfall') { renderWaterfall(groups); return; }
 
   // ── Month column headers ─────────────────────────────────────────────────
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -3316,229 +3298,12 @@ function toggleGroup(key) {
   if (hdr) hdr.classList.toggle("collapsed", !isCollapsed);
 }
 
-/** Render a delta-bridge waterfall: Original -> per-group deltas -> Scenario (P&L only). */
-function renderWaterfall(groups) {
-  // Compute P&L-only grand from the already-filtered groups
-  const plGrandOrig = groups.reduce((s, g) => s + g.total.original, 0);
-
-  // Only groups with a material change
-  const changed = groups.filter(g => Math.abs(g.total.delta) >= 0.5);
-
-  // Build bars: Original -> deltas -> Scenario
-  const bars = [];
-  const origVal = plGrandOrig;
-  bars.push({ label: 'Original', value: origVal, from: 0, to: origVal, type: 'anchor' });
-
-  let running = origVal;
-  for (const g of changed) {
-    const d = g.total.delta;
-    bars.push({ label: g.label, value: d, from: running, to: running + d, type: d >= 0 ? 'pos' : 'neg' });
-    running += d;
-  }
-
-  bars.push({ label: 'Scenario', value: running, from: 0, to: running, type: 'anchor' });
-
-  // ── Chart geometry ──────────────────────────────────────────────────────
-  const n  = bars.length;
-  const W  = Math.max(520, n * 120);
-  const H  = 420;
-  const M  = { top: 50, right: 36, bottom: 74, left: 80 };
-  const pw = W - M.left - M.right;
-  const ph = H - M.top - M.bottom;
-  const gap = pw * 0.035;
-  const bw  = (pw - gap * (n + 1)) / n;
-
-  // Y-axis domain
-  const allY = bars.flatMap(b => [b.from, b.to, 0]);
-  let yMax = Math.max(...allY);
-  let yMin = Math.min(...allY);
-  const yPad = (yMax - yMin || 1) * 0.14;
-  yMax += yPad;
-  yMin -= yPad * 0.4;
-
-  const yOf = v => M.top + ph - ((v - yMin) / (yMax - yMin)) * ph;
-
-  // Grid ticks
-  const step = wfNiceStep((yMax - yMin) / 5);
-  const ticks = [];
-  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) ticks.push(v);
-
-  // Colours
-  const COL = { anchor: '#6abbd9', pos: '#27a882', neg: '#d04060' };
-
-  // ── SVG ─────────────────────────────────────────────────────────────────
-  let s = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
-    xmlns="http://www.w3.org/2000/svg" style="font-family:'Inter',sans-serif">`;
-
-  // Grid lines + tick labels
-  for (const v of ticks) {
-    const y = yOf(v);
-    s += `<line x1="${M.left}" y1="${y}" x2="${W - M.right}" y2="${y}"
-      stroke="#e2eaf0" stroke-width="0.6"/>`;
-    s += `<text x="${M.left - 8}" y="${y + 3}" text-anchor="end"
-      font-family="'IBM Plex Mono',monospace" font-size="8.5" fill="#8ca4b4">${wfFmt(v)}</text>`;
-  }
-
-  // Bars, connectors, labels
-  for (let i = 0; i < n; i++) {
-    const b  = bars[i];
-    const x  = M.left + gap + i * (bw + gap);
-    const hi = Math.max(b.from, b.to);
-    const lo = Math.min(b.from, b.to);
-    const yt = yOf(hi);
-    const yb = yOf(lo);
-    const bh = Math.max(yb - yt, 2);
-    const col = COL[b.type];
-
-    // Bar
-    s += `<rect x="${x}" y="${yt}" width="${bw}" height="${bh}" rx="3"
-      fill="${col}" opacity="${b.type === 'anchor' ? 0.92 : 0.82}" class="wf-bar">
-      <title>${escHtml(b.label)}: ${n0s(b.value)}</title></rect>`;
-
-    // Value label -- anchors show absolute, deltas show signed change
-    const above  = b.type !== 'neg';
-    const valY   = above ? yt - 7 : yb + 13;
-    let valTxt;
-    if (b.type === 'anchor') {
-      valTxt = wfFmt(Math.abs(b.value));
-    } else {
-      valTxt = (b.value >= 0 ? '+' : '\u2212') + wfFmt(Math.abs(b.value));
-    }
-    s += `<text x="${x + bw / 2}" y="${valY}" text-anchor="middle"
-      font-family="'IBM Plex Mono',monospace" font-size="10" font-weight="600"
-      fill="${col}">${valTxt}</text>`;
-
-    // Connector to next bar
-    if (i < n - 1) {
-      const nx = M.left + gap + (i + 1) * (bw + gap);
-      const cy = yOf(b.to);
-      s += `<line x1="${x + bw}" y1="${cy}" x2="${nx}" y2="${cy}"
-        stroke="#c8d8e4" stroke-width="1" stroke-dasharray="4 2"/>`;
-    }
-
-    // X-axis label (word-wrap long names)
-    const ly = H - M.bottom + 18;
-    const words = b.label.split(/\s+/);
-    if (words.length > 1 && b.label.length > 12) {
-      const mid = Math.ceil(words.length / 2);
-      s += `<text x="${x + bw / 2}" y="${ly}" text-anchor="middle"
-        font-size="10" font-weight="500" fill="#4a6374">${escHtml(words.slice(0, mid).join(' '))}</text>`;
-      s += `<text x="${x + bw / 2}" y="${ly + 13}" text-anchor="middle"
-        font-size="10" font-weight="500" fill="#4a6374">${escHtml(words.slice(mid).join(' '))}</text>`;
-    } else {
-      s += `<text x="${x + bw / 2}" y="${ly}" text-anchor="middle"
-        font-size="10" font-weight="${b.type === 'anchor' ? 700 : 500}"
-        fill="${b.type === 'anchor' ? '#1a2e3d' : '#4a6374'}">${escHtml(b.label)}</text>`;
-    }
-  }
-
-  s += `</svg>`;
-  document.getElementById("preview-body").innerHTML = `<div class="wf-wrap">${s}</div>`;
-}
-
-/** Nice round step for axis ticks. */
-function wfNiceStep(rough) {
-  const exp  = Math.floor(Math.log10(Math.abs(rough) || 1));
-  const frac = rough / Math.pow(10, exp);
-  const nice = frac <= 1.5 ? 1 : frac <= 3 ? 2 : frac <= 7 ? 5 : 10;
-  return nice * Math.pow(10, exp);
-}
-
-/** Compact number format for chart labels (e.g. 1.2M, 450K). */
-function wfFmt(v) {
-  const a = Math.abs(v);
-  if (a >= 1e6) return (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.0', '') + 'M';
-  if (a >= 1e3) return Math.round(a / 1e3) + 'K';
-  return String(Math.round(a));
-}
-
-/** Switch between P&L and Cashflow tabs. */
+/** Switch preview tab (only P&L for now). */
 function setPreviewTab(tab, rerender = true) {
   _previewTab = tab;
-  document.getElementById("ptab-pl").classList.toggle("active", tab === "pl");
-  document.getElementById("ptab-cf").classList.toggle("active", tab === "cf");
-  // Show view toggle for both tabs; hide waterfall for CF
-  document.getElementById("pl-view-toggle").style.display = "";
-  document.getElementById("vt-waterfall").style.display = tab === "pl" ? "" : "none";
-  // If CF tab and current mode is waterfall, switch to delta
-  if (tab === "cf" && _previewMode === "waterfall") setPreviewMode("delta", false);
   if (rerender && _previewData) {
-    if (tab === "pl") renderPreview();
-    else              renderCashflowPreview();
+    renderPreview();
   }
-}
-
-/** Render the cashflow impact table from _previewData.cashflow. */
-function renderCashflowPreview() {
-  const cf = _previewData.cashflow;
-  if (!cf || !cf.length) {
-    document.getElementById("preview-body").innerHTML =
-      `<div style="padding:48px;text-align:center;color:var(--muted);font-size:13px">
-         Cashflow structure not available -- ensure Power BI is connected.
-       </div>`;
-    return;
-  }
-
-  const mode = _previewMode;   // 'delta' or 'compare'
-
-  // Section headers inserted before each group
-  const SECTIONS = {
-    4:  "Operating Activities",
-    17: "Investing Activities",
-    22: "Financing Activities",
-    26: "Summary",
-  };
-  // Items to skip in the display (verification / residual duplicates)
-  const SKIP = new Set([29, 30]);
-
-  const colSpan = mode === "compare" ? 4 : 2;
-  let h = `<div class="cf-wrap"><table class="cf-tbl"><thead><tr>
-    <th style="width:${mode === 'compare' ? '40%' : '60%'}">Cashflow Line Item</th>`;
-  if (mode === "compare") {
-    h += `<th>Original </th><th>Scenario </th><th>Delta </th>`;
-  } else {
-    h += `<th>Scenario Delta </th>`;
-  }
-  h += `</tr></thead><tbody>`;
-
-  // CF summary line
-  const cfTotal = cf.find(r => r.sort === 28) || cf[cf.length - 1];
-  if (cfTotal) {
-    const sign = cfTotal.delta >= 0 ? "+" : "\u2212";
-    const cls  = cfTotal.delta >= 0 ? "pos" : "neg";
-    document.getElementById("preview-summary").innerHTML =
-      `Net cash impact: <span class="iv ${cls}">${sign}${n0(Math.abs(cfTotal.delta))}</span>`;
-  }
-
-  for (const row of cf) {
-    if (SKIP.has(row.sort)) continue;
-
-    // Insert section header
-    if (SECTIONS[row.sort]) {
-      h += `<tr class="cf-section"><td colspan="${colSpan}">${SECTIONS[row.sort]}</td></tr>`;
-    }
-
-    const zero    = Math.abs(row.delta) < 0.5;
-    const pn      = row.delta >= 0 ? "cf-pos" : "cf-neg";
-    const rowCls  = row.is_subtotal ? "cf-sub" : (zero ? "cf-zero" : "");
-    const indent  = row.is_subtotal ? "" : "padding-left:32px;";
-
-    h += `<tr class="${rowCls}">`;
-    h += `<td style="${indent}">${escHtml(row.display)}</td>`;
-
-    if (mode === "compare") {
-      h += `<td>${n0s(row.original)}</td>`;
-      h += `<td class="${zero ? '' : pn}">${n0s(row.scenario)}</td>`;
-      h += `<td class="${zero ? '' : pn}">${zero ? '\u2014' : fmtDelta(row.delta)}</td>`;
-    } else {
-      const valTxt = zero ? "\u2014" : fmtDelta(row.delta);
-      h += `<td class="${zero ? '' : pn}">${valTxt}</td>`;
-    }
-    h += `</tr>`;
-  }
-
-  h += `</tbody></table></div>`;
-  document.getElementById("preview-body").innerHTML = h;
 }
 
 function closePreview() {

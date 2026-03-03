@@ -48,8 +48,8 @@ _scenario_agent:   Agent | None          = None   # for Scenario tab
 _current_model_id: str | None            = None   # active model entity
 _status = {"connected": False, "source_type": None, "message": "Not connected"}
 
-# Cashflow structure cache (loaded once per PBI connection)
-_cf_structure: list[dict] | None = None
+
+
 
 
 def _run(coro):
@@ -198,7 +198,7 @@ def connect():
     Connect to a specific Power BI Desktop model.
     Body: { "connection_string": "...", "database": "...", "model_id": "..." }
     """
-    global _source, _cf_structure, _current_model_id
+    global _source, _current_model_id
     with _lock:
         data     = request.get_json() or {}
         conn_str = data.get("connection_string", "").strip()
@@ -215,7 +215,6 @@ def connect():
             _run(source.connect(connection_string=conn_str, database=db_guid))
             source._display_name = data.get("display_name", conn_str)
             _source = source
-            _cf_structure = None  # reset CF cache for new connection
 
             # Auto-detect existing model if model_id not provided
             matched_model = None
@@ -263,7 +262,7 @@ def connect_excel():
     Upload one or more Excel files as a data source.
     Accepts multipart/form-data with file fields and optional model_id.
     """
-    global _source, _cf_structure, _current_model_id
+    global _source, _current_model_id
     with _lock:
         if "files" not in request.files and "file" not in request.files:
             return jsonify({"ok": False,
@@ -296,7 +295,6 @@ def connect_excel():
             source = create_datasource("excel", file_paths=saved_paths)
             _run(source.connect())
             _source = source
-            _cf_structure = None
 
             # Auto-detect existing model if model_id not provided
             matched_model = None
@@ -428,7 +426,7 @@ def update_model_status():
         if new_status == "confirmed" and _source:
             mu = _load_mu(_source, model_id=_current_model_id)
             if mu:
-                _scenario_agent = Agent(_source, mu)
+                _refresh_scenario_agent(_source, mu)
 
         return jsonify({"ok": True, "status": new_status})
 
@@ -492,12 +490,9 @@ def model_overview():
             "account_structures": clean.get("account_structures", {}),
             "account_structure": clean.get("account_structure", {}),
             "filter_dimensions": list(clean.get("filter_dimensions", {}).keys()),
+            "gl_dimensions": clean.get("gl_dimensions", []),
+            "reporting_structures": clean.get("reporting_structures", {}),
             "sources": sources,
-            "measures": [
-                {"name": name, "table": info.get("table", ""),
-                 "expression": info.get("expression", "")}
-                for name, info in clean.get("measures", {}).items()
-            ],
         }
         return jsonify({"ok": True, "data": overview})
 
@@ -765,7 +760,7 @@ def activate_model(model_id):
     Activate a model — set it as current, load its understanding,
     try to reconnect data sources, and reinitialise agents.
     """
-    global _current_model_id, _scenario_agent, _source, _cf_structure
+    global _current_model_id, _scenario_agent, _source
     global _scenario_base_type, _baseline_year, _scenario_year
     with _lock:
         model = _storage.get_model(model_id)
@@ -794,7 +789,6 @@ def activate_model(model_id):
                 new_source = _try_reconnect_sources(model_id)
                 if new_source:
                     _source = new_source
-                    _cf_structure = None
                     _status.update({
                         "connected": True,
                         "source_type": new_source.source_type(),
@@ -1001,10 +995,6 @@ def scenario_preview():
             return jsonify({"ok": False, "error": "No adjustments staged yet."})
 
         mu = _scenario_agent.mu
-        rev_accs  = mu.revenue_accounts() if mu else None
-        cogs_accs = mu.cogs_accounts() if mu else None
-
-        print(f"[Preview] revenue_accounts={rev_accs}, cogs_accounts={cogs_accs}")
 
         # Flatten all staged groups into one adjustment list
         all_adjs = []
@@ -1015,8 +1005,7 @@ def scenario_preview():
 
         orig_rows = _scenario_agent.rows
         sc_rows   = build_scenario(orig_rows, all_adjs,
-                                   revenue_accs=rev_accs,
-                                   cogs_accs=cogs_accs,
+                                   mu=mu,
                                    target_year=_scenario_year)
 
         # Diagnostic: check if adjustments actually changed anything
@@ -1096,97 +1085,32 @@ def scenario_preview():
             "delta":    round(grand_scen - grand_orig, 2),
         }
 
-        # ── Cashflow impact ──────────────────────────────────────────────────
-        cf_result = None
-        global _cf_structure
-        try:
-            if _cf_structure is None and _source is not None:
-                # Cashflow structure should come from ModelUnderstanding
-                # if the model has cashflow_config defined
-                pass
+        # Include reporting_structures for the UI to render P&L hierarchy
+        reporting_structures = None
+        if mu is not None:
+            reporting_structures = mu.reporting_structures or None
 
-            if _cf_structure:
-                pos_orig:   dict[int, float] = {}
-                pos_scen:   dict[int, float] = {}
-                for r in result_accounts:
-                    cfp = acc_meta.get(r["id"], {}).get("cf_position", 0)
-                    if cfp:
-                        pos_orig[cfp] = pos_orig.get(cfp, 0.0) + r["total"]["original"]
-                        pos_scen[cfp] = pos_scen.get(cfp, 0.0) + r["total"]["scenario"]
-
-                base_orig:   dict[int, float] = {}
-                base_scen:   dict[int, float] = {}
-                for cf in _cf_structure:
-                    s = cf["sort"]
-                    if cf["path_from"] == cf["path_to"]:
-                        inv = -1 if cf["invert"] == 1 else 1
-                        base_orig[s] = round(pos_orig.get(s, 0.0) * inv, 2)
-                        base_scen[s] = round(pos_scen.get(s, 0.0) * inv, 2)
-
-                cf_rows = []
-                for cf in _cf_structure:
-                    s = cf["sort"]
-                    is_subtotal = cf["path_from"] != cf["path_to"]
-                    if is_subtotal:
-                        orig = round(sum(
-                            base_orig.get(k, 0.0) for k in base_orig
-                            if cf["path_from"] <= k <= cf["path_to"]
-                        ), 2)
-                        scen = round(sum(
-                            base_scen.get(k, 0.0) for k in base_scen
-                            if cf["path_from"] <= k <= cf["path_to"]
-                        ), 2)
-                    else:
-                        orig = base_orig.get(s, 0.0)
-                        scen = base_scen.get(s, 0.0)
-
-                    cf_rows.append({
-                        "sort":        s,
-                        "display":     cf["display"],
-                        "gruppe":      cf["gruppe"],
-                        "original":    orig,
-                        "scenario":    scen,
-                        "delta":       round(scen - orig, 2),
-                        "is_subtotal": is_subtotal,
-                    })
-
-                cf_result = cf_rows
-        except Exception as e:
-            print(f"[Preview] CF computation skipped: {e}")
-
-        # Include pl_groups from model understanding for the UI
+        # Collect pl_groups for backward-compatible filtering
         pl_groups = None
         if mu is not None:
             pl_groups = sorted(mu.pl_groups) if mu.pl_groups else None
-
-        # Collect all actual account groups from the data
-        actual_groups = sorted({
-            meta.get("grp", "") for meta in acc_meta.values()
-            if meta.get("grp")
-        }) if acc_meta else []
-
-        # Fallback: derive pl_groups from actual account data if MU has none
-        if pl_groups is None and actual_groups:
-            pl_groups = actual_groups
-
-        # Diagnostic: check if pl_groups actually matches the data
-        if pl_groups and actual_groups:
-            matched = set(pl_groups) & set(actual_groups)
-            unmatched_pl = set(pl_groups) - set(actual_groups)
-            if not matched:
-                print(f"[Preview] WARNING: pl_groups {pl_groups} do NOT match any "
-                      f"account groups in data {actual_groups}")
-            elif unmatched_pl:
-                print(f"[Preview] Some pl_groups not in data: {unmatched_pl}")
+        if pl_groups is None:
+            # Derive from actual account data
+            actual_groups = sorted({
+                meta.get("grp", "") for meta in acc_meta.values()
+                if meta.get("grp")
+            }) if acc_meta else []
+            if actual_groups:
+                pl_groups = actual_groups
 
         try:
             return jsonify({
-                "ok":        True,
-                "months":    months,
-                "accounts":  result_accounts,
-                "totals":    col_totals,
-                "cashflow":  cf_result,
-                "pl_groups": pl_groups,
+                "ok":                   True,
+                "months":               months,
+                "accounts":             result_accounts,
+                "totals":               col_totals,
+                "pl_groups":            pl_groups,
+                "reporting_structures": reporting_structures,
             })
         except Exception as e:
             import traceback

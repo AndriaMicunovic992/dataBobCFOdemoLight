@@ -20,8 +20,7 @@ from config import SCENARIO_MODEL
 from datasources.base import DataSource
 from discovery.model_understanding import ModelUnderstanding
 from prompts.builder import PromptBuilder
-from cache import cache_save, cache_load
-from queries import fetch_baseline, run_template_query
+from queries import fetch_baseline
 from scenario import build_scenario, make_sql, save_sql
 
 
@@ -30,11 +29,10 @@ from scenario import build_scenario, make_sql, save_sql
 def data_summary(rows: list[dict],
                  mu: ModelUnderstanding) -> str:
     """
-    Return a rich text summary of loaded budget rows.
+    Return a rich text summary of loaded baseline rows.
 
-    Account names, GL numbers, and reporting groups come from the enriched row
-    fields added by fetch_baseline (live from the data source) — no static map
-    needed here. Uses ModelUnderstanding's pl_groups to classify P&L vs BS accounts.
+    Uses reporting_structures to group accounts into P&L sections.
+    Falls back to legacy pl_groups if reporting_structures not available.
     """
     months:      set[str]         = set()
     acct_totals: dict[int, float] = {}
@@ -51,72 +49,60 @@ def data_summary(rows: list[dict],
                 "grp":  r.get("account_grp",  "—"),
             }
 
-    # Determine revenue/cogs account sets from ModelUnderstanding
-    rev_accs  = mu.revenue_accounts()
-    cogs_accs = mu.cogs_accounts()
-
-    rev   = sum(v for acc, v in acct_totals.items() if acc in rev_accs)
-    cogs  = sum(v for acc, v in acct_totals.items() if acc in cogs_accs)
-    ms    = sorted(months)
-
-    # Separate P&L vs BS accounts by group
-    pl_groups = set(mu.pl_groups)
-
-    pl_accts = {a for a in acct_totals if acct_meta[a]["grp"] in pl_groups}
-    bs_accts = {a for a in acct_totals if a not in pl_accts}
-
-    pl_total = sum(acct_totals[a] for a in pl_accts)
-    bs_total = sum(acct_totals[a] for a in bs_accts)
+    ms = sorted(months)
 
     lines = [
         f"Data loaded: {len(rows)} rows | {len(acct_totals)} accounts "
         f"| {ms[0]} to {ms[-1]}",
-        f"  P&L accounts : {len(pl_accts):>4}   (baseline {ms[0][:4]})",
-        f"    Revenue    : {rev:>15,.0f}",
-        f"    COGS       : {cogs:>15,.0f}",
-        f"    P&L total  : {pl_total:>15,.0f}",
-        f"  BS/CF accounts: {len(bs_accts):>4}   (prior-year actuals as baseline)",
-        f"    BS total   : {bs_total:>15,.0f}",
         "",
+    ]
+
+    # Show reporting structure sections if available
+    pl = mu.get_reporting_structure("pl")
+    if pl:
+        lines.append("P&L structure:")
+        for sec in pl.get("sections", []):
+            sec_name = sec["name"]
+            if sec.get("type") == "subtotal":
+                # Compute subtotal from referenced sections
+                total = 0.0
+                for ref in sec.get("sum_of", []):
+                    ref_ids = mu.account_ids_for_section(ref)
+                    for acc_id in ref_ids:
+                        total += acct_totals.get(acc_id, 0.0)
+                lines.append(f"  {sec_name:<30} {total:>14,.0f}  (subtotal)")
+            else:
+                sec_ids = set(sec.get("account_ids", []))
+                total = sum(acct_totals.get(a, 0.0) for a in sec_ids)
+                count = len(sec_ids & set(acct_totals.keys()))
+                lines.append(f"  {sec_name:<30} {total:>14,.0f}  ({count} accounts)")
+        lines.append("")
+    else:
+        # Legacy: show by account group
+        pl_groups = mu.pl_groups
+        if pl_groups:
+            lines.append("Account groups:")
+            for grp_name in sorted(pl_groups):
+                grp_accts = {a for a in acct_totals if acct_meta[a]["grp"] == grp_name}
+                total = sum(acct_totals[a] for a in grp_accts)
+                lines.append(f"  {grp_name:<30} {total:>14,.0f}  ({len(grp_accts)} accounts)")
+            lines.append("")
+
+    # Account breakdown
+    lines += [
         "Account breakdown:",
         f"  {'ID':>4}  {'GL-Nr.':>8}  {'Group':<26}  {'Name':<36}  {'Amount':>14}",
         "  " + "─" * 96,
     ]
 
-    # P&L accounts first, then BS
-    for acc in sorted(pl_accts):
+    for acc in sorted(acct_totals.keys()):
         meta = acct_meta[acc]
         lines.append(
             f"  {acc:>4}  {meta['nr']:>8}  {meta['grp']:<26}  {meta['name']:<36}"
             f"  {acct_totals[acc]:>14,.0f}"
         )
 
-    if bs_accts:
-        lines.append("  " + "─" * 96)
-        lines.append("  BS/CF accounts (prior-year actuals):")
-        for acc in sorted(bs_accts):
-            meta = acct_meta[acc]
-            lines.append(
-                f"  {acc:>4}  {meta['nr']:>8}  {meta['grp']:<26}  {meta['name']:<36}"
-                f"  {acct_totals[acc]:>14,.0f}"
-            )
-
-    # Cost-object summary: collect names from enriched rows
-    co_names: dict[int, str] = {}
-    for r in rows:
-        cid  = r.get("cost_object_id")
-        name = r.get("cost_object_name")
-        if cid is not None and name and cid not in co_names:
-            co_names[cid] = name
-
-    if co_names:
-        lines += ["", f"  Cost objects ({len(co_names)} unique):"]
-        for cid in sorted(co_names.keys())[:8]:
-            lines.append(f"    {cid}: {co_names[cid]}")
-        if len(co_names) > 8:
-            lines.append(f"    … and {len(co_names) - 8} more")
-
-    lines += ["", "Ready — tell me the adjustments to stage (P&L and/or BS accounts)."]
+    lines += ["", "Ready — tell me the adjustments to stage."]
     return "\n".join(lines)
 
 
@@ -167,7 +153,7 @@ class Agent:
         from config import SCENARIO_API_KEY
         self.ai                = anthropic.Anthropic(api_key=SCENARIO_API_KEY)
         self.conv : list[dict] = []
-        self.rows : list[dict] = []   # in-memory budget data
+        self.rows : list[dict] = []   # in-memory baseline data
         self.staged: list[dict] = []  # staged adjustment groups [{description, adjustments}]
         self.next_scenario_id  = 3    # increments with each applied scenario
         self.base_type: str | None = None      # override for value_type (set by server)
@@ -224,117 +210,9 @@ class Agent:
             if not rows:
                 return "Query returned no rows. Check the connection and filters."
             self.rows = rows
-            cache_save(rows)
             return data_summary(rows, self.mu)
 
-        if name == "run_custom_query":
-            return await self._handle_custom_query(inp)
-
-        if name == "query_customers":
-            return await self._handle_query_customers(inp)
-
         return f"Unknown tool: {name}"
-
-    async def _handle_query_customers(self, inp: dict) -> str:
-        """Handle query_customers tool using ModelUnderstanding query templates."""
-        from datetime import datetime as _dt
-        base = self.baseline_year or self.scenario_year or _dt.now().year
-        default_year = base - 1  # prior year for actuals
-        year   = inp.get("year", default_year)
-        top_n  = inp.get("top_n", 10)
-        search = inp.get("search_name", "").strip()
-
-        if self.mu.has_customer_dimension:
-            # Use customer query templates from ModelUnderstanding
-            template = self.mu.get_query_template("query_customers_top")
-            if not template:
-                return "No customer query template in model understanding."
-
-            query = template.format(
-                year=year, top_n=top_n,
-                company_id=self.mu.company_id or "",
-            )
-            resp = await self.source.query(query)
-            if not resp.get("success"):
-                return f"Query failed: {resp.get('message', 'unknown')}"
-            top_rows = resp.get("data", {}).get("rows", [])
-            if not top_rows:
-                return f"No customer revenue data found for {year}."
-
-            # Format results — templates should return standard columns
-            from queries import _parse_response_rows
-            top_rows = _parse_response_rows(resp)
-
-            # Get total revenue
-            total_template = self.mu.get_query_template("query_customers_total")
-            if total_template:
-                resp2 = await self.source.query(total_template.format(
-                    year=year, company_id=self.mu.company_id or ""
-                ))
-                total_rows = _parse_response_rows(resp2)
-                total_rev = float(total_rows[0].get("total", 1)) if total_rows else 1
-            else:
-                total_rev = sum(float(r.get("revenue", 0)) for r in top_rows) or 1
-
-            lines = [f"Top {top_n} customers by actual revenue {year} "
-                     f"(total company: {total_rev:,.0f}):", ""]
-            lines.append(f"  {'Rank':<5} {'ID':<13} {'Revenue':>14} {'Share':>7}  Name")
-            lines.append("  " + "─" * 70)
-            for rank, r in enumerate(top_rows, 1):
-                cid   = int(r.get("customer_id", r.get("id", 0)))
-                rev   = float(r.get("revenue", 0))
-                share = rev / total_rev * 100
-                name  = r.get("name", r.get("customer_name", "—"))
-                lines.append(f"  {rank:<5} {cid:<13} {rev:>14,.0f} {share:>6.1f}%  {name}")
-
-            return "\n".join(lines)
-
-        return "No customer dimension configured in model understanding."
-
-    async def _handle_custom_query(self, inp: dict) -> str:
-        """Execute a custom query template from ModelUnderstanding."""
-        from datetime import datetime as _dt
-        template_name = inp.get("template_name", "")
-        if not template_name:
-            return "Error: template_name is required."
-
-        default_year = self.baseline_year or self.scenario_year or _dt.now().year
-        year = inp.get("year", default_year)
-        months = inp.get("months")
-
-        vt_override = None
-        if self.base_type:
-            stv = self.mu.scenario_type_values
-            vt_override = stv.get(self.base_type)
-
-        rows = await run_template_query(
-            self.source, self.mu, template_name,
-            year=year, months=months,
-            value_type_override=vt_override,
-        )
-        if not rows:
-            return f"Query '{template_name}' returned no rows."
-        # Format for analysis but do NOT replace baseline self.rows
-        return self._format_custom_result(template_name, rows)
-
-    @staticmethod
-    def _format_custom_result(template_name: str, rows: list[dict]) -> str:
-        """Format custom query results as readable text."""
-        cols = list(rows[0].keys())
-        display_cols = cols[:8]
-        lines = [
-            f"Query '{template_name}': {len(rows)} rows, "
-            f"{len(cols)} columns.",
-            "",
-            "  " + " | ".join(f"{c:<20}" for c in display_cols),
-            "  " + "-" * min(len(display_cols) * 22, 176),
-        ]
-        for r in rows[:25]:
-            vals = [str(r.get(c, ""))[:20] for c in display_cols]
-            lines.append("  " + " | ".join(f"{v:<20}" for v in vals))
-        if len(rows) > 25:
-            lines.append(f"  ... and {len(rows) - 25} more rows")
-        return "\n".join(lines)
 
     def _build_dynamic_context(self) -> str:
         """Build a dynamic context section reflecting current UI selections."""
@@ -366,18 +244,17 @@ class Agent:
                 f"{total_adj} total adjustments"
             )
 
-        # Show available account groups so the agent uses correct group names
-        grps = self.mu.account_groups
-        if grps:
-            grp_lines = []
-            for gname, ginfo in grps.items():
-                ids = ginfo.get("account_ids", [])
-                desc = ginfo.get("description", "")
-                grp_lines.append(f"  {gname}: {len(ids)} accounts"
-                                 + (f" ({desc})" if desc else ""))
-            if grp_lines:
-                parts.append("Account groups for adjustments:\n"
-                             + "\n".join(grp_lines))
+        # Show available reporting structure section names
+        sec_names = self.mu.all_reporting_section_names
+        if sec_names:
+            parts.append("Available account_group values for filters: "
+                         + ", ".join(f'"{n}"' for n in sec_names))
+
+        # Show available GL dimension columns
+        dim_cols = self.mu.gl_dimension_columns
+        if dim_cols:
+            parts.append("Available dimension filter columns: "
+                         + ", ".join(dim_cols))
 
         return "== CURRENT SESSION STATE ==\n" + "\n".join(parts)
 
@@ -390,9 +267,6 @@ class Agent:
         - ```stage blocks accumulate adjustments in self.staged (no SQL yet)
         - ```apply blocks consume ALL of self.staged to generate and save one SQL file
         """
-        if not self.rows:
-            self.rows = cache_load()
-
         self.conv.append({"role": "user", "content": msg})
 
         # Augment system prompt with current session state
@@ -443,10 +317,10 @@ class Agent:
             if apply_spec:
                 if not self.staged:
                     return (re.sub(r"```apply[\s\S]*?```", "", text).strip() +
-                            "\n\n⚠️  Nothing staged yet — describe your adjustments first.")
+                            "\n\nNothing staged yet — describe your adjustments first.")
                 if not self.rows:
                     return (re.sub(r"```apply[\s\S]*?```", "", text).strip() +
-                            "\n\n⚠️  No baseline data loaded — please fetch data first.")
+                            "\n\nNo baseline data loaded — please fetch data first.")
 
                 # Flatten all staged adjustment groups
                 all_adjs = []
@@ -458,8 +332,6 @@ class Agent:
                       f"{len(self.staged)} group(s) as scenario_id={scenario_id} ...")
 
                 # Get model-specific params from ModelUnderstanding
-                rev_accs = self.mu.revenue_accounts()
-                cogs_accs = self.mu.cogs_accounts()
                 target_table = self.mu.sql_target_table
                 sql_columns = self.mu.sql_columns or None
                 company_id = self.mu.company_id
@@ -467,8 +339,7 @@ class Agent:
                 output_dir = OUTPUT_DIR
 
                 sc   = build_scenario(self.rows, all_adjs,
-                                      revenue_accs=rev_accs,
-                                      cogs_accs=cogs_accs,
+                                      mu=self.mu,
                                       target_year=self.scenario_year)
                 sql  = make_sql(sc, apply_spec["label"],
                                 apply_spec.get("description", ""),
@@ -488,14 +359,14 @@ class Agent:
                 clean = re.sub(r"```apply[\s\S]*?```", "", text).strip()
                 return (
                     f"{clean}\n\n"
-                    f"✅ Scenario {scenario_id} SQL saved: {path}\n"
+                    f"Scenario {scenario_id} SQL saved: {path}\n"
                     f"   {len(sc)} rows | {len(all_adjs)} adjustments | {', '.join(dates)}"
                 )
 
             return text
 
     def reset(self):
-        """Clear conversation history and staged adjustments (budget data is preserved)."""
+        """Clear conversation history and staged adjustments (baseline data is preserved)."""
         self.conv   = []
         self.staged = []
         print("[Agent] Conversation and staging area reset.")
