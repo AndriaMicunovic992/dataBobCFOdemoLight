@@ -1874,6 +1874,16 @@ function renderModelOverview(d, container) {
   }
   html += `</div>`;
 
+  // Excel Files (individual file listing)
+  if (d.excel_files && d.excel_files.length) {
+    html += `<div class="mo-section">
+      <div class="mo-section-hd">Excel Files</div>`;
+    for (const f of d.excel_files) {
+      html += `<div class="mo-source-item">&#128196; ${escHtml(f.name)}</div>`;
+    }
+    html += `</div>`;
+  }
+
   // Fact Tables
   html += `<div class="mo-section">
     <div class="mo-section-hd">Fact Tables

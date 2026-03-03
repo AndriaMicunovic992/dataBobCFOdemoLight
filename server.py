@@ -261,6 +261,9 @@ def connect_excel():
     """
     Upload one or more Excel files as a data source.
     Accepts multipart/form-data with file fields and optional model_id.
+
+    If a model is already active, new files are ADDED to the existing set
+    (all files are loaded together into one ExcelSource).
     """
     global _source, _current_model_id
     with _lock:
@@ -272,9 +275,9 @@ def connect_excel():
         if not files:
             return jsonify({"ok": False, "message": "No files uploaded"}), 400
 
-        model_id = request.form.get("model_id") or None
+        model_id = request.form.get("model_id") or _current_model_id
 
-        # Save uploaded files
+        # Save uploaded files to disk
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         saved_paths = []
         for f in files:
@@ -282,44 +285,65 @@ def connect_excel():
                 dest = UPLOADS_DIR / f.filename
                 f.save(str(dest))
                 saved_paths.append(dest)
-                # Track in storage (proper method for externally saved files)
-                _storage.track_uploaded_file(
-                    f.filename, "excel", str(dest), model_id=model_id
-                )
 
         if not saved_paths:
             return jsonify({"ok": False,
                             "message": "No valid Excel files (.xlsx) found"}), 400
 
         try:
+            # Gather existing files for this model (incremental upload)
+            existing_paths = []
+            effective_model_id = model_id
+            if effective_model_id:
+                with _storage._conn() as con:
+                    rows = con.execute(
+                        "SELECT file_path FROM uploaded_files WHERE model_id = ?",
+                        (effective_model_id,)
+                    ).fetchall()
+                saved_names = {p.name for p in saved_paths}
+                for row in rows:
+                    p = Path(row[0])
+                    # Skip files we just saved (avoid duplicates)
+                    if p.exists() and p.name not in saved_names:
+                        existing_paths.append(str(p))
+
+            # Track newly uploaded files in DB
+            for p in saved_paths:
+                _storage.track_uploaded_file(
+                    p.name, "excel", str(p), model_id=effective_model_id
+                )
+
+            # Connect with ALL files (existing + new)
+            all_paths = existing_paths + [str(p) for p in saved_paths]
             source = create_datasource("excel")
-            _run(source.connect(files=[str(p) for p in saved_paths]))
+            _run(source.connect(files=all_paths))
             _source = source
 
             # Auto-detect existing model if model_id not provided
             matched_model = None
-            if not model_id:
+            if not effective_model_id:
                 matched_model = _storage.find_model_by_source_id(source.source_id())
                 if matched_model:
-                    model_id = matched_model["id"]
+                    effective_model_id = matched_model["id"]
 
-            _current_model_id = model_id
+            _current_model_id = effective_model_id
 
-            mu = _load_mu(source, model_id=model_id)
-            _init_agents(source, mu, model_id=model_id)
+            mu = _load_mu(source, model_id=effective_model_id)
+            _init_agents(source, mu, model_id=effective_model_id)
 
-            if model_id:
-                _storage.touch_model(model_id)
+            if effective_model_id:
+                _storage.touch_model(effective_model_id)
 
+            total_files = len(all_paths)
             _status["connected"]   = True
             _status["source_type"] = "excel"
-            _status["message"]     = f"Connected to {len(saved_paths)} Excel file(s)"
+            _status["message"]     = f"Connected to {total_files} Excel file(s)"
             return jsonify({
                 "ok": True,
                 "message": _status["message"],
-                "files": [p.name for p in saved_paths],
+                "files": [Path(p).name for p in all_paths],
                 "has_understanding": mu is not None,
-                "model_id": model_id,
+                "model_id": effective_model_id,
                 "matched_model": matched_model,
             })
         except Exception as e:
@@ -451,9 +475,15 @@ def model_overview():
             for s in _storage.get_model_sources(_current_model_id):
                 sid = s.get("source_id", "")
                 linked_source_ids.add(sid)
+                label = s.get("label", "")
+                # If label is empty or just the source_type, use
+                # display_name from the live source (shows filenames)
+                if (not label or label == s.get("source_type", "")) \
+                        and _source and _source.source_id() == sid:
+                    label = _source.display_name()
                 sources.append({
                     "link_id": s.get("id"),
-                    "label": s.get("label", s.get("source_type", "")),
+                    "label": label or s.get("source_type", ""),
                     "source_type": s.get("source_type", ""),
                     "source_id": sid,
                     "connected": (_source is not None and
@@ -494,6 +524,19 @@ def model_overview():
             "reporting_structures": clean.get("reporting_structures", {}),
             "sources": sources,
         }
+
+        # Include individual Excel file list for UI display
+        if _current_model_id:
+            with _storage._conn() as con:
+                frows = con.execute(
+                    "SELECT filename, file_path FROM uploaded_files "
+                    "WHERE model_id = ? ORDER BY uploaded_at",
+                    (_current_model_id,)
+                ).fetchall()
+            overview["excel_files"] = [
+                {"name": r[0], "path": r[1]} for r in frows
+            ]
+
         return jsonify({"ok": True, "data": overview})
 
 

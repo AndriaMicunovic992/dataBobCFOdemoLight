@@ -221,6 +221,12 @@ class ExcelSource(DataSource):
     def source_id(self) -> str:
         return f"excel:{self._source_hash}" if self._source_hash else "excel:not_loaded"
 
+    def display_name(self) -> str:
+        """Human-readable name showing the loaded file names."""
+        if self._files:
+            return ", ".join(f.name for f in self._files)
+        return self.source_id()
+
     def query_language(self) -> str:
         return "SQL"
 
