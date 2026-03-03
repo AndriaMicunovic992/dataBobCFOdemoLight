@@ -269,6 +269,12 @@ Use get_sample_data to inspect table contents. Fix and re-test until it works.
 - Focus on what the scenario agent needs: fact table, accounts, amounts, dates, groups, value types, QUERY TEMPLATES.
 - **Never save without working query_templates.** The scenario agent is useless without them.
 - Ensure the fetch_baseline template uses {value_type_id} placeholder — never hardcode a specific value type number.
+- **Custom queries**: When you create and test a custom query (e.g. revenue per customer,
+  monthly trend), you MUST add it to `query_templates` with a descriptive key and call
+  `save_understanding` to persist it. Custom queries that are only tested with run_test_query
+  but NOT saved to query_templates are LOST and invisible to the scenario agent.
+  Example: After testing a customer revenue query, get the current understanding, add
+  `"revenue_per_customer": "SELECT ..."` to query_templates, then call save_understanding.
 
 == IMPORTANT: COMPACT JSON ==
 When calling save_understanding, you MUST keep the JSON compact to avoid output truncation:

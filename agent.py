@@ -349,8 +349,10 @@ class Agent:
 
         bl_year = self.baseline_year or _dt.now().year
         sc_year = self.scenario_year or bl_year
-        parts.append(f"Baseline year: {bl_year}")
-        parts.append(f"Scenario target year: {sc_year}")
+        parts.append(f"Baseline year (Load): {bl_year}")
+        parts.append(f"Scenario target year (Apply): {sc_year}")
+        parts.append(f"When the user asks you to fetch data, use year={bl_year}. "
+                     f"When generating SQL, adjustments target year {sc_year}.")
 
         if self.rows:
             parts.append(f"Data loaded: {len(self.rows)} rows in memory")
@@ -363,6 +365,19 @@ class Agent:
                 f"Staged: {len(self.staged)} groups, "
                 f"{total_adj} total adjustments"
             )
+
+        # Show available account groups so the agent uses correct group names
+        grps = self.mu.account_groups
+        if grps:
+            grp_lines = []
+            for gname, ginfo in grps.items():
+                ids = ginfo.get("account_ids", [])
+                desc = ginfo.get("description", "")
+                grp_lines.append(f"  {gname}: {len(ids)} accounts"
+                                 + (f" ({desc})" if desc else ""))
+            if grp_lines:
+                parts.append("Account groups for adjustments:\n"
+                             + "\n".join(grp_lines))
 
         return "== CURRENT SESSION STATE ==\n" + "\n".join(parts)
 
