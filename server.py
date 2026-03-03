@@ -280,13 +280,21 @@ def connect_excel():
         # Save uploaded files to disk
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         saved_paths = []
+        xls_rejected = []
         for f in files:
-            if f.filename and f.filename.endswith((".xlsx", ".xls")):
+            if f.filename and f.filename.endswith(".xlsx"):
                 dest = UPLOADS_DIR / f.filename
                 f.save(str(dest))
                 saved_paths.append(dest)
+            elif f.filename and f.filename.endswith(".xls"):
+                xls_rejected.append(f.filename)
 
         if not saved_paths:
+            if xls_rejected:
+                return jsonify({"ok": False,
+                    "message": "Old Excel format (.xls) is not supported. "
+                               "Please re-save as .xlsx: "
+                               + ", ".join(xls_rejected)}), 400
             return jsonify({"ok": False,
                             "message": "No valid Excel files (.xlsx) found"}), 400
 
