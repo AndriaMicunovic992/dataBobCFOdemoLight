@@ -51,10 +51,12 @@ def _auto_build_baseline_query(mu: ModelUnderstanding) -> str | None:
     """
     Auto-build a baseline data query template from scenario_target metadata.
 
-    Returns a template string with {year}, {month_filter}, {company_id},
+    Returns a template string with {year}, {month_filter},
     {value_type_id} placeholders, or None if required metadata is missing.
     The value_type_id placeholder allows runtime switching between actuals,
     budget, forecast, or any other value type.
+    Does NOT filter by dimension columns (company, etc.) — those are returned
+    as output columns for the scenario agent to use in filter-based adjustments.
     """
     ft = mu.fact_table
     dc = mu.date_column
@@ -95,15 +97,14 @@ def _auto_build_baseline_query(mu: ModelUnderstanding) -> str | None:
     stc = mu.scenario_type_column
     stv = mu.scenario_type_values
     budget_val = stv.get("budget", stv.get("scenario_base"))
-    cc = mu.company_column
 
     if lang == "DAX":
         return _build_dax_baseline_query(
-            ft, dc, amt_cols, account_fk, stc, budget_val, cc, mu
+            ft, dc, amt_cols, account_fk, stc, budget_val, mu
         )
     elif lang == "SQL":
         return _build_sql_baseline_query(
-            ft, dc, amt_cols, account_fk, stc, budget_val, cc, mu
+            ft, dc, amt_cols, account_fk, stc, budget_val, mu
         )
     else:
         print(f"[Query] Unknown query_language: {lang}")
@@ -111,12 +112,15 @@ def _auto_build_baseline_query(mu: ModelUnderstanding) -> str | None:
 
 
 def _build_dax_baseline_query(ft, dc, amt_cols, account_fk,
-                               stc, budget_val, cc, mu) -> str:
-    """Build DAX EVALUATE SELECTCOLUMNS query for baseline data."""
-    # Filter conditions
+                               stc, budget_val, mu) -> str:
+    """Build DAX EVALUATE SELECTCOLUMNS query for baseline data.
+
+    Does NOT filter by dimension columns (company, etc.) — only by year,
+    value_type, and optional month. Dimension columns are included as
+    output columns for the scenario agent's filter-based adjustments.
+    """
+    # Filter conditions — only year, value_type, month (no dimension filters)
     filters = [f"YEAR('{ft}'[{dc}]) = {{year}}"]
-    if cc:
-        filters.append(f"'{ft}'[{cc}] = {{company_id}}")
     if stc and budget_val is not None:
         filters.append(f"'{ft}'[{stc}] = {{value_type_id}}")
 
@@ -133,17 +137,14 @@ def _build_dax_baseline_query(ft, dc, amt_cols, account_fk,
     else:
         select_parts.append(f'"budget_amount", \'{ft}\'[{amt_cols[0]}]')
 
-    # Add additional FK columns from table metadata if available
+    # Add dimension FK columns as output (including company) for filter-based adjustments
     tinfo = mu.get_table(ft)
     if tinfo:
         skip = {account_fk, dc} | set(amt_cols)
         if stc:
             skip.add(stc)
-        if cc:
-            skip.add(cc)
         for cname, cmeta in tinfo.get("important_columns", {}).items():
             if cname not in skip:
-                # Pass through with original name as alias
                 select_parts.append(f'"{cname}", \'{ft}\'[{cname}]')
 
     select_str = ", ".join(select_parts)
@@ -159,8 +160,13 @@ def _build_dax_baseline_query(ft, dc, amt_cols, account_fk,
 
 
 def _build_sql_baseline_query(ft, dc, amt_cols, account_fk,
-                               stc, budget_val, cc, mu) -> str:
-    """Build SQL SELECT query for baseline data."""
+                               stc, budget_val, mu) -> str:
+    """Build SQL SELECT query for baseline data.
+
+    Does NOT filter by dimension columns (company, etc.) — only by year,
+    value_type, and optional month. Dimension columns are included as
+    output columns for the scenario agent's filter-based adjustments.
+    """
     # Column aliases
     cols = [
         f"{account_fk} AS main_account_id",
@@ -172,24 +178,20 @@ def _build_sql_baseline_query(ft, dc, amt_cols, account_fk,
     else:
         cols.append(f"{amt_cols[0]} AS budget_amount")
 
-    # Add FK columns from table metadata
+    # Add dimension FK columns as output (including company) for filter-based adjustments
     tinfo = mu.get_table(ft)
     if tinfo:
         skip = {account_fk, dc} | set(amt_cols)
         if stc:
             skip.add(stc)
-        if cc:
-            skip.add(cc)
         for cname in tinfo.get("important_columns", {}):
             if cname not in skip:
                 cols.append(cname)
 
     col_str = ", ".join(cols)
 
-    # WHERE conditions
+    # WHERE conditions — only year, value_type, month (no dimension filters)
     wheres = [f"YEAR({dc}) = {{year}}"]
-    if cc:
-        wheres.append(f"{cc} = {{company_id}}")
     if stc and budget_val is not None:
         wheres.append(f"{stc} = {{value_type_id}}")
 
@@ -368,13 +370,16 @@ async def fetch_baseline(source: DataSource,
     else:
         vt_id = ""
 
-    # Fill template
-    query = template.format(
+    # Fill template — use format_map so missing placeholders don't raise errors.
+    # Legacy templates may still contain {company_id}; pass it for backwards
+    # compatibility but new templates should NOT filter by company.
+    params = _SafeFormatDict(
         year=year,
         month_filter=month_filter,
         company_id=mu.company_id or "",
         value_type_id=vt_id,
     )
+    query = template.format_map(params)
 
     # Determine which value type label to show in logs
     _vt_label = "baseline"

@@ -120,9 +120,6 @@ When calling save_understanding, provide JSON with this structure:
       ]
     }
   },
-  "filter_dimensions": {
-    "company": {"table": "FactTable", "column": "company_id", "default_value": 4}
-  },
   "scenario_target": {
     "fact_table": "FactTable",
     "date_column": "accounting_date",
@@ -178,13 +175,20 @@ and know that CompanyID is the filter column.
 Templates define the STRUCTURE of data retrieval — NOT specific parameter values.
 All parameters are filled at RUNTIME. Templates use Python format placeholders.
 
+IMPORTANT: The baseline query must NOT filter by dimension columns (company, cost center,
+department, etc.). It fetches ALL rows for a given year and value type. Dimension columns
+are returned as OUTPUT columns so the scenario agent can use them for filter-based
+adjustments at runtime. The user decides what to filter on when building scenarios.
+
 --- fetch_baseline ---
 Runtime placeholders (filled automatically):
   {year}          — fiscal year, selected by user
   {month_filter}  — auto-built; empty string for full year, or filter clause for months
-  {company_id}    — from model config
   {value_type_id} — selected by user (e.g. 1=actuals, 2=budget).
                     CRITICAL: NEVER hardcode — always use this placeholder.
+
+DO NOT include {company_id} or any other dimension filter in the WHERE clause.
+The baseline fetches ALL data for the year/value_type combination.
 
 Required output column aliases (EXACT names):
   "main_account_id"  — account/GL ID (integer)
@@ -192,14 +196,13 @@ Required output column aliases (EXACT names):
   "amount"           — primary amount (number)
   "budget_amount"    — secondary amount (number, can be same as amount)
   Plus ALL additional FK columns the fact table has (company_id, currency_id,
-  cost_object_id, cost_center_id, etc.) — the scenario agent needs these for
-  filter-based adjustments.
+  cost_object_id, cost_center_id, etc.) — these are OUTPUT columns, not filters.
+  The scenario agent needs them for filter-based adjustments.
 
 DAX example:
   EVALUATE SELECTCOLUMNS(
     FILTER('FactGL',
       YEAR('FactGL'[Date]) = {year}
-      && 'FactGL'[CompanyID] = {company_id}
       && 'FactGL'[ValueTypeID] = {value_type_id}
       {month_filter}
     ),
@@ -215,7 +218,7 @@ SQL example:
   SELECT account_id AS main_account_id, posting_date AS accounting_date,
          amount, amount AS budget_amount, company_id, cost_center_id
   FROM fact_gl
-  WHERE YEAR(posting_date) = {year} AND company_id = {company_id}
+  WHERE YEAR(posting_date) = {year}
     AND value_type_id = {value_type_id} {month_filter}
 
 --- fetch_account_map ---
@@ -242,12 +245,14 @@ SQL example:
   FROM dim_accounts WHERE id IN ({account_ids})
 
 == VALIDATION ==
-Before saving, you MUST:
-1. Build fetch_baseline template and test with run_test_query (use concrete test values)
-2. Verify result has: main_account_id, accounting_date, amount, budget_amount
-3. Build fetch_account_map template and test it (use account IDs from step 1)
-4. Verify result has: id, nr, name, group
-5. Only save once BOTH templates return valid data
+Before saving, you MUST test query templates. But NEVER pick test values yourself.
+1. ASK the user: "Which year and value type should I use to test the queries?"
+   Wait for the user's answer before running any test query.
+2. Build fetch_baseline template and test with run_test_query using the user's values.
+3. Verify result has: main_account_id, accounting_date, amount, budget_amount
+4. Build fetch_account_map template and test it (use account IDs from step 2)
+5. Verify result has: id, nr, name, group
+6. Only save once BOTH templates return valid data
 
 == RULES ==
 - Always start with extract_schema before asking questions.
@@ -258,6 +263,9 @@ Before saving, you MUST:
   confirm it using the Confirm button."
 - Never save without working query_templates.
 - Ensure fetch_baseline uses {value_type_id} placeholder — never hardcode a value type.
+- NEVER assume default values for year, company, value type, etc. Always ask the user.
+- Only build templates listed in the checklist (fetch_baseline, fetch_account_map).
+  Do NOT invent additional templates unless the user explicitly requests them.
 - Keep JSON compact: no indentation, skip empty sections, short descriptions.
 """
 
