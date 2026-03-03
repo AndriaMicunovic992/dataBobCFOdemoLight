@@ -149,6 +149,90 @@ class ModelUnderstanding:
         grp = self.account_groups.get("cogs", {})
         return set(grp.get("account_ids", []))
 
+    # ── GL Dimensions ──────────────────────────────────────────────────────
+
+    @property
+    def gl_dimensions(self) -> list[dict]:
+        """
+        Dimensions connected to the GL fact table. Each entry:
+          {"column": "CompanyID", "dimension_table": "DimCompany",
+           "label": "Company", "label_column": "CompanyName"}
+        dimension_table and label_column may be None for inline columns.
+        """
+        return self.raw.get("gl_dimensions", [])
+
+    def get_gl_dimension(self, column: str) -> dict | None:
+        """Find a GL dimension by its fact-table column name."""
+        for dim in self.gl_dimensions:
+            if dim.get("column") == column:
+                return dim
+        return None
+
+    @property
+    def gl_dimension_columns(self) -> list[str]:
+        """List of fact-table column names that are GL dimensions."""
+        return [d["column"] for d in self.gl_dimensions if "column" in d]
+
+    # ── Reporting Structures ───────────────────────────────────────────────
+
+    @property
+    def reporting_structures(self) -> dict[str, dict]:
+        """
+        Hierarchical reporting structures keyed by type (pl, bs, cf).
+        Each structure has:
+          {"name": "Profit & Loss", "sections": [
+            {"name": "Revenue", "account_ids": [4010, 4020], "sign": 1},
+            {"name": "Net Revenue", "type": "subtotal", "sum_of": ["Revenue", "Discounts"]},
+            ...
+          ]}
+        """
+        return self.raw.get("reporting_structures", {})
+
+    def get_reporting_structure(self, name: str) -> dict | None:
+        """Get a single reporting structure (pl, bs, cf)."""
+        return self.reporting_structures.get(name)
+
+    def account_ids_for_section(self, section_name: str) -> set[int]:
+        """
+        Resolve account IDs for a named section across all reporting structures.
+        For subtotal sections, recursively resolves referenced sections.
+        """
+        # Build a lookup of section name → section dict
+        all_sections = {}
+        for struct in self.reporting_structures.values():
+            for sec in struct.get("sections", []):
+                all_sections[sec["name"]] = sec
+
+        return self._resolve_section_ids(section_name, all_sections, set())
+
+    def _resolve_section_ids(self, name: str, sections: dict,
+                             visited: set) -> set[int]:
+        """Recursively resolve account IDs, handling subtotals."""
+        if name in visited:
+            return set()
+        visited.add(name)
+
+        sec = sections.get(name)
+        if not sec:
+            return set()
+
+        if sec.get("type") == "subtotal":
+            ids = set()
+            for ref in sec.get("sum_of", []):
+                ids |= self._resolve_section_ids(ref, sections, visited)
+            return ids
+
+        return set(sec.get("account_ids", []))
+
+    @property
+    def all_reporting_section_names(self) -> list[str]:
+        """All section names across all reporting structures (for prompt/tools)."""
+        names = []
+        for struct in self.reporting_structures.values():
+            for sec in struct.get("sections", []):
+                names.append(sec["name"])
+        return names
+
     # ── Filter Dimensions ──────────────────────────────────────────────────
 
     @property
@@ -167,7 +251,7 @@ class ModelUnderstanding:
         cf = self.filter_dimensions.get("company", {})
         return cf.get("column", "")
 
-    # ── Reporting Groups ───────────────────────────────────────────────────
+    # ── Reporting Groups (legacy — prefer reporting_structures) ────────────
 
     @property
     def reporting_groups(self) -> dict:
@@ -175,10 +259,20 @@ class ModelUnderstanding:
 
     @property
     def pl_groups(self) -> set[str]:
+        """P&L group names. Derives from reporting_structures if available."""
+        # Try new reporting_structures first
+        pl = self.get_reporting_structure("pl")
+        if pl:
+            return {sec["name"] for sec in pl.get("sections", [])
+                    if sec.get("account_ids")}
         return set(self.reporting_groups.get("pl_groups", []))
 
     @property
     def bs_groups(self) -> set[str]:
+        bs = self.get_reporting_structure("bs")
+        if bs:
+            return {sec["name"] for sec in bs.get("sections", [])
+                    if sec.get("account_ids")}
         return set(self.reporting_groups.get("bs_groups", []))
 
     # ── Relationships ──────────────────────────────────────────────────────
@@ -233,37 +327,6 @@ class ModelUnderstanding:
     @property
     def sql_columns(self) -> list[str]:
         return self.sql_target.get("columns", [])
-
-    # ── Cashflow ───────────────────────────────────────────────────────────
-
-    @property
-    def cashflow_config(self) -> dict:
-        return self.raw.get("cashflow_config", {})
-
-    @property
-    def has_cashflow(self) -> bool:
-        return bool(self.cashflow_config.get("structure_table"))
-
-    # ── Customer Dimension ─────────────────────────────────────────────────
-
-    @property
-    def customer_config(self) -> dict:
-        return self.raw.get("customer_config", {})
-
-    @property
-    def has_customer_dimension(self) -> bool:
-        return bool(self.customer_config.get("customer_table"))
-
-    # ── DAX Measures ──────────────────────────────────────────────────────
-
-    @property
-    def measures(self) -> dict[str, dict]:
-        """DAX measures: {measure_name: {expression, table, description}}"""
-        return self.raw.get("measures", {})
-
-    @property
-    def has_measures(self) -> bool:
-        return bool(self.measures)
 
     # ── Serialization ──────────────────────────────────────────────────────
 

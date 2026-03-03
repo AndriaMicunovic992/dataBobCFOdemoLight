@@ -2,7 +2,7 @@
 scenario.py — Scenario calculation and SQL generation.
 
 Provides:
-  build_scenario()  — apply % adjustments to baseline rows
+  build_scenario()  — apply filter-based adjustments to baseline rows
   make_sql()        — render rows as a SQL INSERT script
   save_sql()        — write the SQL script to the output folder
 
@@ -17,18 +17,23 @@ from datetime import datetime
 from pathlib import Path
 
 from config import OUTPUT_DIR
+from discovery.model_understanding import ModelUnderstanding
 
 
 def build_scenario(rows: list[dict], adjustments: list[dict],
-                   revenue_accs: set[int] | None = None,
-                   cogs_accs: set[int] | None = None,
+                   mu: ModelUnderstanding,
                    target_year: int | None = None) -> list[dict]:
     """
-    Apply a list of adjustments to baseline rows.
+    Apply filter-based adjustments to baseline rows.
 
     Each adjustment dict supports:
+        filters       — dict of column/value conditions (AND logic):
+                        - "account_group": section name from reporting_structures
+                          (resolved to account IDs)
+                        - "account_ids": list or comma-separated string of account IDs
+                        - any other key: matched directly against row column
+                        Empty or missing filters → matches all rows.
         months        — list of month numbers (1-12); omit for full year
-        account_group — "revenue" | "cogs" | "all" | "112,114,..." (comma-separated IDs)
         pct_change    — float; percentage adjustment (positive = increase)
         abs_change    — float; absolute amount, distributed evenly across matching rows
 
@@ -37,41 +42,41 @@ def build_scenario(rows: list[dict], adjustments: list[dict],
     Args:
         rows:         Baseline rows (from any year/value type).
         adjustments:  List of adjustment dicts.
-        revenue_accs: Set of revenue account IDs from ModelUnderstanding.
-        cogs_accs:    Set of COGS account IDs from ModelUnderstanding.
+        mu:           ModelUnderstanding for resolving account groups/sections.
         target_year:  If set and different from the baseline year, shift all
                       dates to this year (e.g. load 2025 actuals → apply as 2026).
 
     Returns a new list of row dicts with amount and budget_amount scaled.
-    All other FK columns (currency_id, cost_object_id, …) are preserved as-is.
+    All other FK columns (currency_id, cost_object_id, ...) are preserved as-is.
     """
-    _rev = revenue_accs or set()
-    _cogs = cogs_accs or set()
-
     scenario = [dict(r) for r in rows]   # shallow copy — values are primitives
 
     for adj in adjustments:
-        months  = set(adj.get("months", []))
-        grp     = adj.get("account_group", "all")
+        months = set(adj.get("months", []))
+        filters = adj.get("filters", {})
 
-        if grp == "revenue":
-            targets = _rev
-        elif grp == "cogs":
-            targets = _cogs
-        elif grp == "all":
-            targets = None
-        else:
-            targets = {int(x.strip()) for x in str(grp).split(",") if x.strip().isdigit()}
+        # Pre-resolve account_group and account_ids filters into a target set
+        account_targets = _resolve_account_filter(filters, mu)
+
+        # Build non-account filters (everything except account_group/account_ids)
+        row_filters = {k: v for k, v in filters.items()
+                       if k not in ("account_group", "account_ids")}
 
         # Identify matching rows
-        matching = [
-            r for r in scenario
-            if (not months or int(r["date"][5:7]) in months)
-            and (targets is None or r["account"] in targets)
-        ]
+        matching = []
+        for r in scenario:
+            # Month filter
+            if months and int(r["date"][5:7]) not in months:
+                continue
+            # Account filter
+            if account_targets is not None and r["account"] not in account_targets:
+                continue
+            # Dimension filters (any GL dimension column)
+            if not _row_matches_filters(r, row_filters):
+                continue
+            matching.append(r)
 
         if "abs_change" in adj:
-            # Distribute absolute amount evenly across matching rows
             n = len(matching)
             if n > 0:
                 per_row = adj["abs_change"] / n
@@ -79,7 +84,6 @@ def build_scenario(rows: list[dict], adjustments: list[dict],
                     r["amount"]        = round(r["amount"]        + per_row, 2)
                     r["budget_amount"] = round(r["budget_amount"] + per_row, 2)
         else:
-            # Percentage change
             pct = adj.get("pct_change", 0) / 100.0
             for r in matching:
                 r["amount"]        = round(r["amount"]        * (1 + pct), 2)
@@ -93,6 +97,78 @@ def build_scenario(rows: list[dict], adjustments: list[dict],
                 r["date"] = str(target_year) + r["date"][4:]
 
     return scenario
+
+
+def _resolve_account_filter(filters: dict,
+                            mu: ModelUnderstanding) -> set[int] | None:
+    """
+    Resolve account-related filters into a set of account IDs.
+
+    Handles:
+      - "account_group": section name from reporting_structures or account_groups
+      - "account_ids": direct list or comma-separated string
+      - Both present: intersection
+      - Neither: returns None (match all accounts)
+    """
+    from_group = None
+    from_ids = None
+
+    # Resolve account_group → account IDs via reporting_structures
+    grp_name = filters.get("account_group")
+    if grp_name:
+        # First try reporting_structures sections
+        from_group = mu.account_ids_for_section(grp_name)
+        if not from_group:
+            # Fall back to legacy account_groups
+            legacy = mu.account_groups.get(grp_name, {})
+            from_group = set(legacy.get("account_ids", []))
+        if not from_group:
+            # Group name not found — try parsing as comma-separated IDs
+            from_group = _parse_id_list(grp_name)
+
+    # Resolve account_ids → direct set
+    raw_ids = filters.get("account_ids")
+    if raw_ids is not None:
+        if isinstance(raw_ids, list):
+            from_ids = {int(x) for x in raw_ids}
+        else:
+            from_ids = _parse_id_list(str(raw_ids))
+
+    if from_group is not None and from_ids is not None:
+        return from_group & from_ids
+    if from_group is not None:
+        return from_group
+    if from_ids is not None:
+        return from_ids
+    return None
+
+
+def _parse_id_list(s: str) -> set[int]:
+    """Parse a comma-separated string of IDs into a set of ints."""
+    return {int(x.strip()) for x in s.split(",") if x.strip().isdigit()}
+
+
+def _row_matches_filters(row: dict, filters: dict) -> bool:
+    """Check if a row matches all non-account dimension filters."""
+    for col, val in filters.items():
+        row_val = row.get(col)
+        if row_val is None:
+            return False
+        # Coerce types for comparison (row may have int, filter may have str)
+        try:
+            if type(row_val) != type(val):
+                if isinstance(val, int):
+                    row_val = int(row_val)
+                elif isinstance(val, float):
+                    row_val = float(row_val)
+                else:
+                    row_val = str(row_val)
+                    val = str(val)
+        except (ValueError, TypeError):
+            return False
+        if row_val != val:
+            return False
+    return True
 
 
 def _sql_val(v) -> str:

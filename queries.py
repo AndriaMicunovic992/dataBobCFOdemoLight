@@ -221,12 +221,10 @@ def _auto_build_fetch_account_map(mu: ModelUnderstanding) -> str | None:
     grouping_cols = mu.account_structure.get("grouping_columns", [])
     group_col = grouping_cols[0] if grouping_cols else None
 
-    # Find cashflow position column
+    # Find cashflow position column (from raw MU if present)
     cf_col = None
-    cf_config = mu.cashflow_config
+    cf_config = mu.raw.get("cashflow_config", {})
     if cf_config.get("structure_table"):
-        # CF position may be in a separate table — check if it's the same
-        # as the account table or accessible via relationship
         cf_table = cf_config.get("structure_table", "")
         cf_position_col = cf_config.get("position_column", "")
         if cf_table == acct_table and cf_position_col:
