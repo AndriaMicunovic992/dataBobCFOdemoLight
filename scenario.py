@@ -178,7 +178,7 @@ def _sql_val(v) -> str:
     return str(v)
 
 
-def _derive_sql_columns(scenario: list[dict], company_id, scenario_id) -> list[str]:
+def _derive_sql_columns(scenario: list[dict], scenario_id) -> list[str]:
     """
     Derive the INSERT column list dynamically from the actual row keys.
 
@@ -206,9 +206,8 @@ def _derive_sql_columns(scenario: list[dict], company_id, scenario_id) -> list[s
 
 
 def make_sql(scenario: list[dict], label: str, description: str = "",
-             scenario_id: int = 3,
+             scenario_id: int = 100,
              target_table: str | None = None,
-             company_id: int | None = None,
              columns: list[str] | None = None) -> str:
     """
     Render scenario rows as a complete SQL INSERT script.
@@ -229,13 +228,12 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
             "Ensure sql_target.table_name is set in ModelUnderstanding."
         )
     _table = target_table
-    _company = company_id if company_id is not None else 0
 
     # Determine column list: explicit > derived from rows
     if columns:
         sql_cols = list(columns)
     else:
-        sql_cols = _derive_sql_columns(scenario, _company, scenario_id)
+        sql_cols = _derive_sql_columns(scenario, scenario_id)
 
     dates       = sorted({r["date"] for r in scenario})
     sorted_rows = sorted(scenario, key=lambda r: (r["date"], r["account"]))
@@ -246,7 +244,6 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
         "-- ================================================================",
         f"-- SCENARIO : {label}",
         f"-- Generated: {datetime.now():%Y-%m-%d %H:%M:%S}",
-        f"-- Company  : company_id={_company}",
         f"-- Type     : value_type_id={scenario_id} (Scenario)",
         f"-- Rows     : {len(scenario)}",
     ]
@@ -257,7 +254,7 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
         "",
         "-- DELETE existing rows for this scenario before re-loading:",
         f"-- DELETE FROM {_table}",
-        f"-- WHERE company_id={_company} AND value_type_id={scenario_id}",
+        f"-- WHERE value_type_id={scenario_id}",
         "--   AND accounting_date IN ({});".format(", ".join(f"'{d}'" for d in dates)),
         "",
         f"INSERT INTO {_table} (",
@@ -272,8 +269,6 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
         for col in sql_cols:
             if col == "main_account_id":
                 vals.append(str(r["account"]))
-            elif col == "company_id":
-                vals.append(str(_company))
             elif col == "accounting_date":
                 vals.append(f"'{r['date']}'")
             elif col == "value_type_id":
@@ -291,13 +286,13 @@ def make_sql(scenario: list[dict], label: str, description: str = "",
         "-- Verify:",
         f"-- SELECT {', '.join(sql_cols[:5])}",
         f"-- FROM {_table}",
-        f"-- WHERE company_id={_company} AND value_type_id={scenario_id}",
+        f"-- WHERE value_type_id={scenario_id}",
         "-- ORDER BY accounting_date, main_account_id;",
     ]
     return "\n".join(lines)
 
 
-def save_sql(sql: str, label: str, scenario_id: int = 3,
+def save_sql(sql: str, label: str, scenario_id: int = 100,
              output_dir: Path | None = None) -> Path:
     """Write the SQL script to the output directory and return the file path."""
     _dir = output_dir or OUTPUT_DIR
